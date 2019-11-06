@@ -27,12 +27,13 @@ ax=fig.add_subplot(111,projection='3d')
 ax2=fig2.add_subplot(111,projection='3d')
 ax2.scatter3D(particles[::,0],particles[::,1],particles[::,2])
 velocities=np.zeros([3,len(particles)])
-steps=np.linspace(0,1000,4000)
-dt=0.05
-
+steps=range(20003)
+dt=0.1
+inbetween=[]
 def force_law(pos1,pos2):
     dist=np.linalg.norm(pos1-pos2,2)
-    return (pos1-pos2)/dist * math.exp(-dist**2)
+    # return (pos1-pos2)/dist * math.exp(-dist**2)
+    return (pos1-pos2)/(dist**3)
 oldparticles=particles
 oldparticles_temp=particles
 it=0
@@ -46,13 +47,18 @@ for step in steps:
         force=np.zeros(3)
         for otherparticle in otherparticles:
 
-            distance=np.linalg.norm(particle-otherparticle,2)
+            distance=np.linalg.norm(particle-otherparticle)
             distlist.append(distance)
 
+
             force=force+force_law(particle,otherparticle)
-            minlist.append(np.amin(distlist))
-        normalcomponent=particle/np.linalg.norm(particle,2)
+        if it%1000==0:minlist.append(np.amin(distlist))
+        normalcomponent=particle/np.linalg.norm(particle)
         force=force-np.dot(normalcomponent,force)*normalcomponent
+
+        if np.amin(distlist)>1:
+            force*=3
+
         if it==0:
             newp=particle+0.5*force*dt**2
             particles[i]=newp/np.linalg.norm(newp,2)
@@ -62,8 +68,10 @@ for step in steps:
             particles[i]=newp/np.linalg.norm(newp,2)
             oldparticles[i]=oldparticles_temp[i]
         i+=1
+    if it%1000==0: histlist.append(minlist)
     it+=1
-    histlist.append(minlist)
+    if step==500:
+        inbetween=particles
 
 nbins=50
 # print(histlist[1])
@@ -72,13 +80,15 @@ nbins=50
 # xs=(bins[:-1]+bins[1:])/2
 # plt.bar(xs,hist,width=1/60)
 k=0
-for z in steps[0::100]:
-    hist,bins=np.histogram(histlist[k],bins=nbins)
+for z in histlist[3:]:
+    hist,bins=np.histogram(z,bins=nbins)
     xs=(bins[:-1]+bins[1:])/2
+    d=np.mean(bins[1:]-bins[:-1])
 
-    ax.bar(xs,hist,zs=z,zdir='y',alpha=0.8,width=0.01)
+    ax.bar(xs,hist,zs=k,zdir='y',alpha=0.8,width=0.8*d)
     k+=1
 
+ax2.scatter3D(inbetween[::,0],inbetween[::,1],inbetween[::,2])
 ax2.scatter3D(particles[::,0],particles[::,1],particles[::,2])
 plt.show()
 
