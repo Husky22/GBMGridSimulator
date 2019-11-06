@@ -8,6 +8,7 @@ Source: [[http://mathworld.wolfram.com/SpherePointPicking.html][MathWorld]]
 
 ** Evenly Distribution by Fibonacci Sphere Algorithm
 [[https://stackoverflow.com/questions/9600801/evenly-distributing-n-points-on-a-sphere][StackOverflow Source]]
+[[http://extremelearning.com.au/evenly-distributing-points-on-a-sphere/][Modified Fibonacci Source]] (Modified Fibonacci Broken)
 ** Spacecraft coordinates
 From Trigdata we can get
 
