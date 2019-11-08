@@ -11,7 +11,8 @@ from astropy.coordinates import BaseCoordinateFrame, Attribute, RepresentationMa
 from astropy.coordinates import frame_transform_graph
 from IPython.display import HTML, display
 from tabulate import tabulate
-
+import gbm_drm_gen as drm
+from glob import glob
 
 class Simulator():
     """
@@ -144,13 +145,14 @@ class Simulator():
 
 
 
-    def setup(self,irange=[-1.5,-1],erange=[100,400],algorithm='ModifiedFibonacci'):
+    def setup(self,irange=[-1.5,-1],erange=[100,400],algorithm='Fibonacci',background_function=Powerlaw(K=10,index=-1.5,piv=100.)):
         '''
-        Setup grid and spectrum matrices
+        Setup grid, spectrum matrices and the the background function
         '''
 
         self.indexrange=irange
         self.energyrange= erange
+        self.background=background_function
 
 
         if algorithm=='Fibonacci':
@@ -203,6 +205,29 @@ class Simulator():
             pointlist.append(point.coord)
         return pointlist
 
+    def generate_DRM_spectrum(self):
+
+        det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
+        self.det_rsp=dict()
+        trigger="191017391"
+        os.chdir('/home/niklas/Dokumente/Bachelor/rawdata/191017391')
+        for det in det_list:
+            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+trigger+'_v0*.fit.gz')[0],trigdat=glob('glg_trigdat_all_bn'+trigger+'_v0*.fit')[0],mat_type=2,cspecfile=glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.pha')[0])
+
+            self.det_rsp[det] = rsp
+
+        for gp in self.grid:
+            ra, dec = gp.j2000.ra.degree, gp.j2000.dec.degree
+            for det in det_list:
+                gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
+                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                i=0
+                for i in range(np.shape(gp.spectrum_matrix)[0]):
+                    j=0
+                    for j in range(np.shape(gp.spectrum_matrix)[0]):
+                        gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+
+
 
 
 
@@ -212,6 +237,8 @@ class GridPoint():
         self.coord = coord
         self.dim=dim
         self.j2000 = None
+        self.response=dict()
+        self.photon_counts=dict()
 
 
     def generate_spectrum(self,i_max,i_min,e_max,e_min):
@@ -229,9 +256,10 @@ class GridPoint():
             j=0
             for epmax_i in epmax:
                 self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=epmax_i,index=index_i)
-                self.value_matrix[i,j]=u"Index="+unicode(round(index_i,3))+u" Energy="+unicode(epmax_i)
+                self.value_matrix[i,j]=u"Index="+unicode(round(index_i,3))+u";Energy="+unicode(epmax_i)
                 j+=1
             i+=1
+
 
     def add_j2000(self,trigdat,time=0.,final_frame=coord.FK5):
 
