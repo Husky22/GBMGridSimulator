@@ -14,7 +14,9 @@ from tabulate import tabulate
 import gbm_drm_gen as drm
 from glob import glob
 
+
 class Simulator():
+
     """
     Fermi GBM Simulator
 
@@ -26,7 +28,7 @@ class Simulator():
         self.grid=None
         self.j2000_generate=False
         self.indexrange=None
-        self.energyrange=None
+        self.cutoffrange=None
 
 
     def fibonacci_sphere(self,randomize=True):
@@ -50,11 +52,12 @@ class Simulator():
                 points.append(GridPoint([x,y,z],self.spectrum_dimension))
             return np.array(points)
 
+
     def voronoi_sphere(self):
 
         """
         !!BROKEN!!
-        A modified better version of the fibonacci algorithm
+        Should have been a modified better version of the fibonacci algorithm
         """
         samples=self.N
         points=[]
@@ -141,17 +144,13 @@ class Simulator():
             self.grid[i].update_coord(particles[i])
 
 
-
-
-
-
-    def setup(self,irange=[-1.5,-1],erange=[100,400],algorithm='Fibonacci',background_function=Powerlaw(K=10,index=-1.5,piv=100.)):
+    def setup(self,irange=[-1.5,-1],crange=[100,400],K=500,algorithm='Fibonacci',background_function=Powerlaw(K=10,index=-1.5,piv=100.)):
         '''
         Setup grid, spectrum matrices and the the background function
         '''
 
         self.indexrange=irange
-        self.energyrange= erange
+        self.cutoffrange= crange
         self.background=background_function
 
 
@@ -168,10 +167,9 @@ class Simulator():
                 self.generate_j2000(self.trigfile)
 
         for point in self.grid:
-            point.generate_spectrum(i_min=float(min(irange)),i_max=float(max(irange)),e_min=float(min(erange)),e_max=float(max(erange)))
+            point.generate_spectrum(i_min=float(min(irange)),i_max=float(max(irange)),c_min=float(min(crange)),c_max=float(max(crange)),K=K)
 
     
-
     def generate_j2000(self,trigdat,final_frame=coord.FK5):
         '''
         Calculate Ra and Dec Values
@@ -183,6 +181,7 @@ class Simulator():
             self.j2000_generate=True
         except:
             print("Error! Is trigdat path correct?")
+
 
     def grid_plot(self):
         '''
@@ -200,12 +199,27 @@ class Simulator():
 
 
     def get_coords_from_gridpoints(self):
+        '''
+        Returns python list of all x,y,z coordinates of the points
+        '''
         pointlist=[]
         for point in self.grid:
             pointlist.append(point.coord)
         return pointlist
 
+
     def generate_DRM_spectrum(self):
+        '''
+        Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
+        through it so that we get a simulated physical photon count spectrum
+
+        It uses sample TTE,TRIGDAT and CSPEC files to generate the DRMs
+
+        Generates for every GridPoint:
+        response
+        photon_counts
+
+        '''
 
         det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
         self.det_rsp=dict()
@@ -233,6 +247,10 @@ class Simulator():
 
 class GridPoint():
 
+    '''
+    One point in the simulation grid.
+    '''
+
     def __init__(self,coord,dim):
         self.coord = coord
         self.dim=dim
@@ -241,22 +259,23 @@ class GridPoint():
         self.photon_counts=dict()
 
 
-    def generate_spectrum(self,i_max,i_min,e_max,e_min):
-        """ Compute sample cutoff powerlaw spectra
+    def generate_spectrum(self,i_max,i_min,c_max,c_min,K):
+        """
+        Compute sample cutoff powerlaw spectra
         """
         n=self.dim[0]
         m=self.dim[1]
         self.spectrum_matrix=np.empty(self.dim,dtype=classmethod)
         self.value_matrix=np.empty(self.dim,dtype='U24')
         index=np.linspace(i_min,i_max,n)
-        epmax=np.linspace(e_min,e_max,m)
+        cutoff=np.linspace(c_min,c_max,m)
         i=0
         # source=PointSource()
         for index_i in index:
             j=0
-            for epmax_i in epmax:
-                self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=epmax_i,index=index_i)
-                self.value_matrix[i,j]=u"Index="+unicode(round(index_i,3))+u";Energy="+unicode(epmax_i)
+            for cutoff_i in cutoff:
+                self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=K,index=index_i,piv=100,xc=cutoff_i)
+                self.value_matrix[i,j]=u"Index="+unicode(round(index_i,3))+u";Cutoff="+unicode(cutoff_i)
                 j+=1
             i+=1
 
@@ -268,8 +287,7 @@ class GridPoint():
         for the already given coordinate in the Fermi-Frame
 
         final_frame:
-              coord.FK5
-              coord.
+        doesnt matter as gbm_frame.gbm_to_j2000 outputs only ICRS
         """
 
         position_interpolator= PositionInterpolator(trigdat=trigdat)
@@ -283,13 +301,18 @@ class GridPoint():
         icrsdata=gbm_frame.gbm_to_j2000(frame,final_frame)
         self.j2000=icrsdata
 
+
     def show(self):
+        '''
+        Returns coordinates in cartesian and ICRS and a table with the generated sample spectrum parameters
+        '''
         print("GBM Cartesian Coordinates: "+ str(self.coord))
         if self.j2000==None:
             print("RA and DEC not calculated yet! Use generate_j2000 function of Simulator to do so.")
         else:
             print("RA: "+ str(self.j2000.ra)+ " \nDEC: "+ str(self.j2000.dec))
         display(HTML(tabulate(self.value_matrix,tablefmt='html',headers=range(self.dim[1]),showindex='always'))) 
+
 
     def update_coord(self,new_coord):
         self.coord=new_coord
