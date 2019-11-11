@@ -225,7 +225,7 @@ class Simulator():
         det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
         self.det_rsp=dict()
         trigger="191017391"
-        os.chdir('/rawdata/191017391')
+        os.chdir('rawdata/191017391')
         for det in det_list:
             rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+trigger+'_v0*.fit.gz')[0],trigdat=glob('glg_trigdat_all_bn'+trigger+'_v0*.fit')[0],mat_type=2,cspecfile=glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.pha')[0])
 
