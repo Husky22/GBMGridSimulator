@@ -13,6 +13,7 @@ from IPython.display import HTML, display
 from tabulate import tabulate
 import gbm_drm_gen as drm
 from glob import glob
+import dill
 
 
 class Simulator():
@@ -224,7 +225,7 @@ class Simulator():
         det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
         self.det_rsp=dict()
         trigger="191017391"
-        os.chdir('/home/niklas/Dokumente/Bachelor/rawdata/191017391')
+        os.chdir('/rawdata/191017391')
         for det in det_list:
             rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+trigger+'_v0*.fit.gz')[0],trigdat=glob('glg_trigdat_all_bn'+trigger+'_v0*.fit')[0],mat_type=2,cspecfile=glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.pha')[0])
 
@@ -240,6 +241,11 @@ class Simulator():
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+
+    def save(self,name):
+        with open(name+'.pkl','wb') as f:
+            dill.dump(Simulator,f)
+
 
 
 
