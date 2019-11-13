@@ -1,15 +1,79 @@
+import os
+from Simulator import *
+from trigdat_reader import TrigReader
+from mpi4py import MPI
+mpi=MPI.COMM_WORLD
+rank=mpi.Get_rank()
+
 import warnings
 warnings.simplefilter('ignore')
-import os
-os.chdir('/home/niklas/Dokumente/Bachelor/Python/PythonScripts/SimulatorSetup/')
-from Simulator import *
 
 
-n_objects=10
-spectrumgrid=[4,4]
+n_objects=1
+spectrumgrid=[1,1]
 simulation=Simulator(n_objects,spectrumgrid)
+det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
 simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=100)
-trigdat="/home/niklas/Dokumente/Bachelor/rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
+trigdat="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
+# simulation.coulomb_refining(1000)
 simulation.generate_j2000(trigdat)
 simulation.generate_DRM_spectrum()
+with open("radec.txt",'wb') as f:
+    f.write('RA: '+ str(simulation.grid[0].j2000.ra))
+    f.write('DEC: '+ str(simulation.grid[0].j2000.dec))
+
+
+    simulation.
+
+
+
+
+det_bl=dict()
+rsp_time=0.
+
+det_list_new=[]
+for det in det_list:
+    if det != 'b0' and det != 'b1':
+        simulation.grid[0].photon_counts[det][0,0].set_active_measurements('8.1-900')
+    else:
+        simulation.grid[0].photon_counts[det][0,0].set_active_measurements('250-30000')
+
+    if simulation.grid[0].photon_counts[det][0,0].significance>200:
+        det_list_new.append(det)
+
+point=simulation.grid[0]
+
+for det in det_list_new:
+    det_bl[det]=drm.BALROGLike.from_spectrumlike(point.photon_counts[det][0,0],rsp_time,simulation.det_rsp[det],free_position=True)
+
+data = DataList(*det_bl.values())
+
+ra = 10.
+dec = 10.
+
+cpl = Cutoff_powerlaw()
+cpl.K.prior = Log_uniform_prior(lower_bound=1e-3, upper_bound=500)
+cpl.xc.prior = Log_uniform_prior(lower_bound=10, upper_bound=1e4)
+cpl.index.set_uninformative_prior(Uniform_prior)
+model = Model(PointSource('grb',ra,dec,spectral_shape=cpl))
+bayes = BayesianAnalysis(model, data)
+wrap = [0]*len(model.free_parameters)
+wrap[0] = 1
+_ =bayes.sample_multinest(400,chain_name='chains/',
+                        importance_nested_sampling=False,
+                        const_efficiency_mode=False,
+                        wrapped_params=wrap,
+                        verbose=True,
+                        resume=False)
+if (rank ==0):
+    bayes.results.write_to('location_results.fits', overwrite=True) 
+
+res=bayes.results
+str_path=os.getcwd()
+
+cc_plot=res.corner_plot_cc()
+cc_plot.savefig(str_path+'/cc_plot_test.pdf')
+spectrum_plot=display_spectrum_model_counts(bayes,step=False);
+spectrum_plot.savefig(str_path+'/spectrum_plot_test.pdf')
+
