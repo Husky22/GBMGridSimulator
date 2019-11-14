@@ -145,7 +145,7 @@ class Simulator():
             self.grid[i].update_coord(particles[i])
 
 
-    def setup(self,irange=[-1.5,-1],crange=[100,400],K=500,algorithm='Fibonacci',background_function=Powerlaw(K=10,index=-1.5,piv=100.)):
+    def setup(self,irange=[-1.5,-1],crange=[100,400],K=50,algorithm='Fibonacci',background_function=Powerlaw(K=10,index=-1.5,piv=100.)):
         '''
         Setup grid, spectrum matrices and the the background function
         '''
@@ -182,6 +182,7 @@ class Simulator():
             self.j2000_generate=True
         except:
             print("Error! Is trigdat path correct?")
+
 
 
     def grid_plot(self):
@@ -232,7 +233,7 @@ class Simulator():
             self.det_rsp[det] = rsp
 
         for gp in self.grid:
-            ra, dec = gp.j2000.ra.degree, gp.j2000.dec.degree
+            ra, dec = gp.ra, gp.dec
             for det in det_list:
                 gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
                 gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
@@ -241,14 +242,13 @@ class Simulator():
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+        os.chdir('../../')
 
-    def save(self,name):
-        with open(name+'.pkl','wb') as f:
-            dill.dump(Simulator,f)
+    def save(self,fname):
+        np.save(fname,self.grid)
 
-
-
-
+    def load(self,fname):
+        self.grid=np.load(fname,allow_pickle=True)
 
 
 class GridPoint():
@@ -272,7 +272,8 @@ class GridPoint():
         n=self.dim[0]
         m=self.dim[1]
         self.spectrum_matrix=np.empty(self.dim,dtype=classmethod)
-        self.value_matrix=np.empty(self.dim,dtype='U24')
+        self.value_matrix_string=np.empty(self.dim,dtype='U24')
+        self.value_matrix=np.empty(self.dim,dtype=[('K','f8'),('xc','f8'),('index','f8')])
         index=np.linspace(i_min,i_max,n)
         cutoff=np.linspace(c_min,c_max,m)
         i=0
@@ -281,9 +282,13 @@ class GridPoint():
             j=0
             for cutoff_i in cutoff:
                 self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=K,index=index_i,piv=100,xc=cutoff_i)
-                self.value_matrix[i,j]=u"Index="+unicode(round(index_i,3))+u";Cutoff="+unicode(cutoff_i)
+                self.value_matrix_string[i,j]=u"Index="+unicode(round(index_i,3))+u";Cutoff="+unicode(cutoff_i)
+                self.value_matrix[i,j]["K"]=K
+                self.value_matrix[i,j]["xc"]=cutoff_i
+                self.value_matrix[i,j]["index"]=index_i
                 j+=1
             i+=1
+        print self.value_matrix
 
 
     def add_j2000(self,trigdat,time=0.,final_frame=coord.FK5):
@@ -306,6 +311,8 @@ class GridPoint():
         # Muessen die Punkte ins unendliche projiziert werden?
         icrsdata=gbm_frame.gbm_to_j2000(frame,final_frame)
         self.j2000=icrsdata
+        self.ra=self.j2000.ra.degree
+        self.dec=self.j2000.dec.degree
 
 
     def show(self):
@@ -317,7 +324,7 @@ class GridPoint():
             print("RA and DEC not calculated yet! Use generate_j2000 function of Simulator to do so.")
         else:
             print("RA: "+ str(self.j2000.ra)+ " \nDEC: "+ str(self.j2000.dec))
-        display(HTML(tabulate(self.value_matrix,tablefmt='html',headers=range(self.dim[1]),showindex='always'))) 
+        display(HTML(tabulate(self.value_matrix_string,tablefmt='html',headers=range(self.dim[1]),showindex='always'))) 
 
 
     def update_coord(self,new_coord):
