@@ -3,6 +3,7 @@ from Simulator import *
 import numpy as np
 import chainconsumer
 from trigdat_reader import TrigReader
+import pymultinest as pmn
 from mpi4py import MPI
 mpi=MPI.COMM_WORLD
 rank=mpi.Get_rank()
@@ -17,7 +18,7 @@ trigfile="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
 simulation=Simulator(n_objects,spectrumgrid,trigfile)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
-simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50)
+simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[20,70],K=30)
 # simulation.coulomb_refining(1000)
 simulation.generate_j2000()
 simulation.generate_TRIG_spectrum()
@@ -44,6 +45,7 @@ for det in det_list:
 
 point=simulation.grid[0]
 
+
 for det in det_list_new:
     det_bl[det]=drm.BALROGLike.from_spectrumlike(point.photon_counts[det][0,0],rsp_time,simulation.det_rsp[det],free_position=True)
 
@@ -53,8 +55,9 @@ ra = 10.
 dec = 10.
 
 cpl = Cutoff_powerlaw()
-cpl.K.prior = Log_uniform_prior(lower_bound=1e-3, upper_bound=1000)
-cpl.xc.prior = Log_uniform_prior(lower_bound=10, upper_bound=1e4)
+cpl.K.prior = Log_uniform_prior(lower_bound=1e-3, upper_bound=1e3)
+
+cpl.xc.prior = Log_uniform_prior(lower_bound=1, upper_bound=1e4)
 cpl.index.set_uninformative_prior(Uniform_prior)
 model = Model(PointSource('grb',ra,dec,spectral_shape=cpl))
 bayes = BayesianAnalysis(model, data)
