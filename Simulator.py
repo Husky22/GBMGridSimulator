@@ -146,7 +146,7 @@ class Simulator():
             self.grid[i].update_coord(particles[i])
 
 
-    def setup(self,irange=[-1.5,-1],crange=[100,400],K=50,algorithm='Fibonacci',background_function=Powerlaw(K=10,index=-1.5,piv=100.)):
+    def setup(self,irange=[-1.5,-1],crange=[100,400],K=50,algorithm='Fibonacci',background_function=Powerlaw(K=1.,index=-1.5,piv=100.)):
         '''
         Setup grid, spectrum matrices and the the background function
         '''
