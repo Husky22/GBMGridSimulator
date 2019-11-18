@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import astromodels
-from threeML import * 
+from threeML import *
 import astropy.units as u
 import astropy.coordinates as coord
 from gbmgeometry import PositionInterpolator, GBM, GBMFrame, gbm_frame
@@ -23,13 +23,14 @@ class Simulator():
 
     """
 
-    def __init__(self,source_number, spectrum_matrix_dimensions ):
+    def __init__(self,source_number, spectrum_matrix_dimensions,trigfile):
         self.N=source_number
         self.spectrum_dimension=spectrum_matrix_dimensions
         self.grid=None
         self.j2000_generate=False
         self.indexrange=None
         self.cutoffrange=None
+        self.trigfile=trigfile
 
 
     def fibonacci_sphere(self,randomize=True):
@@ -171,14 +172,18 @@ class Simulator():
             point.generate_spectrum(i_min=float(min(irange)),i_max=float(max(irange)),c_min=float(min(crange)),c_max=float(max(crange)),K=K)
 
     
-    def generate_j2000(self,trigdat,final_frame=coord.FK5):
+    def generate_j2000(self,time=0.):
         '''
         Calculate Ra and Dec Values
         '''
-        self.trigfile=trigdat
+        position_interpolator= PositionInterpolator(trigdat=self.trigfile)
+        # fermi=GBM(position_interpolator.quaternion(time),
+        #           position_interpolator.sc_pos(time) * u.km)
+        self.sat_coord=position_interpolator.sc_pos(time)
+        self.sat_quat=position_interpolator.quaternion(time)
         try:
             for gp in self.grid:
-                gp.add_j2000(trigdat,final_frame=final_frame)
+                gp.add_j2000(self.sat_coord,self.sat_quat)
             self.j2000_generate=True
         except:
             print("Error! Is trigdat path correct?")
@@ -209,6 +214,39 @@ class Simulator():
             pointlist.append(point.coord)
         return pointlist
 
+    def generate_TRIG_spectrum(self):
+        '''
+        Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
+        through it so that we get a simulated physical photon count spectrum
+
+        It uses sample TTE,TRIGDAT and CSPEC files to generate the DRMs
+
+        Generates for every GridPoint:
+        response
+        photon_counts
+
+        '''
+
+        det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
+        self.det_rsp=dict()
+        trigger="191017391"
+        os.chdir('rawdata/191017391')
+        for det in det_list:
+            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det))
+
+            self.det_rsp[det] = rsp
+
+        for gp in self.grid:
+            ra, dec = gp.ra, gp.dec
+            for det in det_list:
+                gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
+                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                i=0
+                for i in range(np.shape(gp.spectrum_matrix)[0]):
+                    j=0
+                    for j in range(np.shape(gp.spectrum_matrix)[0]):
+                        gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+        os.chdir('../../')
 
     def generate_DRM_spectrum(self):
         '''
@@ -291,7 +329,7 @@ class GridPoint():
         print self.value_matrix
 
 
-    def add_j2000(self,trigdat,time=0.,final_frame=coord.FK5):
+    def add_j2000(self,sat_coord,sat_quat,time=0.):
 
         """
         Calculate the corresponding Ra and Dec coordinates
@@ -300,16 +338,12 @@ class GridPoint():
         final_frame:
         doesnt matter as gbm_frame.gbm_to_j2000 outputs only ICRS
         """
+        x,y,z=sat_coord
+        q1,q2,q3,q4=sat_quat
 
-        position_interpolator= PositionInterpolator(trigdat=trigdat)
-        fermi=GBM(position_interpolator.quaternion(time),
-                  position_interpolator.sc_pos(time) * u.km)
-
-        x,y,z=position_interpolator.sc_pos(time)
-        q1,q2,q3,q4=position_interpolator.quaternion(time)
         frame=GBMFrame(sc_pos_X=x,sc_pos_Y=y,sc_pos_Z=z,quaternion_1=q1,quaternion_2=q2,quaternion_3=q3,quaternion_4=q4,SCX=self.coord[0]*u.km,SCY=self.coord[1]*u.km,SCZ=self.coord[2]*u.km,representation='cartesian')
         # Muessen die Punkte ins unendliche projiziert werden?
-        icrsdata=gbm_frame.gbm_to_j2000(frame,final_frame)
+        icrsdata=gbm_frame.gbm_to_j2000(frame,coord.ICRS)
         self.j2000=icrsdata
         self.ra=self.j2000.ra.degree
         self.dec=self.j2000.dec.degree

@@ -13,14 +13,14 @@ warnings.simplefilter('ignore')
 
 n_objects=1
 spectrumgrid=[1,1]
-simulation=Simulator(n_objects,spectrumgrid)
+trigfile="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
+simulation=Simulator(n_objects,spectrumgrid,trigfile)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
 simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50)
-trigdat="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
 # simulation.coulomb_refining(1000)
-simulation.generate_j2000(trigdat)
-simulation.generate_DRM_spectrum()
+simulation.generate_j2000()
+simulation.generate_TRIG_spectrum()
 with open("radec.txt",'wb') as f:
     f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
     f.write('DEC: '+ str(simulation.grid[0].dec))
