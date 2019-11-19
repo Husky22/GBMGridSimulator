@@ -4,6 +4,7 @@ import numpy as np
 import chainconsumer
 from trigdat_reader import TrigReader
 import pymultinest as pmn
+from glob import glob
 
 import warnings
 warnings.simplefilter('ignore')
@@ -12,7 +13,7 @@ warnings.simplefilter('ignore')
 n_objects=1
 spectrumgrid=[1,1]
 #trigfile="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
-trigdat="/rawdata/131229277/glg_trigdat_all_bn131229277_v01.fit"
+trigdat=glob("/rawdata/131229277/glg_trigdat_all_bn131229277_v0*.fit")[0]
 simulation=Simulator(n_objects,spectrumgrid,trigdat)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
