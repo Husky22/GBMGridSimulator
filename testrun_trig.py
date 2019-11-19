@@ -34,12 +34,17 @@ rsp_time=0.
 
 det_list_new=[]
 for det in det_list:
+    print(simulation.grid[0].photon_counts[det][0,0].significance)
+
+sigval=input("Enter min Significance Value: ")
+
+for det in det_list:
     if det != 'b0' and det != 'b1':
         simulation.grid[0].photon_counts[det][0,0].set_active_measurements('8.1-900')
     else:
         simulation.grid[0].photon_counts[det][0,0].set_active_measurements('250-30000')
 
-    if simulation.grid[0].photon_counts[det][0,0].significance>100:
+    if simulation.grid[0].photon_counts[det][0,0].significance>sigval:
         det_list_new.append(det)
 
 point=simulation.grid[0]
