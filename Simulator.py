@@ -106,9 +106,11 @@ class Simulator():
 
         velocities=np.zeros([3,len(particles)])
         steps=range(Nsteps)
+
         def force_law(pos1,pos2):
             dist=np.linalg.norm(pos1-pos2,2)
             return (pos1-pos2)/(dist**3)
+
         oldparticles=particles
         oldparticles_temp=particles
         it=0

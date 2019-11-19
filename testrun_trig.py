@@ -4,9 +4,6 @@ import numpy as np
 import chainconsumer
 from trigdat_reader import TrigReader
 import pymultinest as pmn
-from mpi4py import MPI
-mpi=MPI.COMM_WORLD
-rank=mpi.Get_rank()
 
 import warnings
 warnings.simplefilter('ignore')
@@ -14,7 +11,8 @@ warnings.simplefilter('ignore')
 
 n_objects=1
 spectrumgrid=[1,1]
-trigfile="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
+#trigfile="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
+trigfile="/home/niklasvm/Envs/Simulator/rawdata/glg_trigdat_all_bn190504678_v01.fit"
 simulation=Simulator(n_objects,spectrumgrid,trigfile)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
@@ -69,8 +67,7 @@ _ =bayes.sample_multinest(400,chain_name='chains/',
                         wrapped_params=wrap,
                         verbose=True,
                         resume=False)
-if (rank ==0):
-    bayes.results.write_to('location_results2.fits', overwrite=True) 
+bayes.results.write_to('location_results2.fits', overwrite=True) 
 
 res=bayes.results
 str_path=os.getcwd()

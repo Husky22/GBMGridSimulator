@@ -13,13 +13,13 @@ warnings.simplefilter('ignore')
 
 n_objects=1
 spectrumgrid=[1,1]
-simulation=Simulator(n_objects,spectrumgrid)
+trigdat="/home/niklasvm/Envs/Simulator/rawdata/glg_trigdat_all_bn190504678_v01.fit"
+simulation=Simulator(n_objects,spectrumgrid,trigdat)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
-simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50)
-trigdat="rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit"
+simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=0.50)
 # simulation.coulomb_refining(1000)
-simulation.generate_j2000(trigdat)
+simulation.generate_j2000()
 simulation.generate_DRM_spectrum()
 with open("radec.txt",'wb') as f:
     f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
@@ -53,7 +53,9 @@ ra = 10.
 dec = 10.
 
 cpl = Cutoff_powerlaw()
-cpl.K.prior = Log_uniform_prior(lower_bound=1e-3, upper_bound=1000)
+cpl.K.prior = Log_uniform_prior()
+cpl.K.prior.lower_bound=1e-3
+cpl.K.prior.upper_bound=1e3
 cpl.xc.prior = Log_uniform_prior(lower_bound=10, upper_bound=1e4)
 cpl.index.set_uninformative_prior(Uniform_prior)
 model = Model(PointSource('grb',ra,dec,spectral_shape=cpl))
@@ -66,13 +68,14 @@ _ =bayes.sample_multinest(400,chain_name='chains/',
                         wrapped_params=wrap,
                         verbose=True,
                         resume=False)
-if (rank ==0):
+if rank==0:
     bayes.results.write_to('location_results2.fits', overwrite=True) 
 
 res=bayes.results
 str_path=os.getcwd()
+print(str_path)
 
-cc_plot=res.corner_plot_cc()
+cc_plot=res.corner_plot_cc();
 cc_plot.savefig(str_path+'/cc_plot_test.pdf')
 spectrum_plot=display_spectrum_model_counts(bayes,step=False);
 spectrum_plot.savefig(str_path+'/spectrum_plot_test.pdf')
