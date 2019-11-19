@@ -3,9 +3,9 @@ from threeML import *
 
 import warnings                                                                                                                                
 warnings.simplefilter('ignore')   # we load the trigdat file
-trig1='/home/niklas/Dokumente/Bachelor/rawdata/190504678/glg_trigdat_all_bn190504678_v01.fit'
-trig2='/home/niklasvm/Envs/Simulator/rawdata/131229227/glg_trigdat_all_bn131229277_v02.fit'
-trig_reader = TrigReader('rawdata/131229227/glg_trigdat_all_bn131229277_v02.fit',fine=True,verbose=False)
+trig1='/rawdata/190504678/glg_trigdat_all_bn190504678_v01.fit'
+trig2='/rawdata/131229277/glg_trigdat_all_bn131229277_v02.fit'
+trig_reader = TrigReader(trig2,fine=True,verbose=False)
 trig_reader.set_background_selections('3-30','-10--5')
 trig_reader.set_active_time_interval('-0.5-0.5')
 # we choose which detectors to use and create the data plugin
