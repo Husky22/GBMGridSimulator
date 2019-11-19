@@ -18,7 +18,7 @@ trigdat=glob("rawdata/131229277/glg_trigdat_all_bn131229277_v0*.fit")[0]
 simulation=Simulator(n_objects,spectrumgrid,trigdat)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
-simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=0.10,background_function=Powerlaw(K=.1))
+simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=1,background_function=Powerlaw(K=.1))
 # simulation.coulomb_refining(1000)
 simulation.generate_j2000()
 simulation.generate_DRM_spectrum(trigger="131229277")
@@ -36,8 +36,9 @@ rsp_time=0.
 detsort=[]
 for det in det_list:
     detsort.append(simulation.grid[0].photon_counts[det][0,0].significance)
-sigval=sorted(detsort)[-3]
+sigval=sorted(detsort)[-3]-1
 
+print sigval
 det_list_new=[]
 for det in det_list:
     if det != 'b0' and det != 'b1':
