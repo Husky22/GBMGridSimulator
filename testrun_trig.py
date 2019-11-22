@@ -20,7 +20,7 @@ det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[15,20],K=20)
 # simulation.coulomb_refining(1000)
 simulation.generate_j2000()
-simulation.generate_TRIG_spectrum(trigger="131229277")
+simulation.generate_TRIG_spectrum2(trigger="131229277")
 with open("radec.txt",'wb') as f:
     f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
     f.write('DEC: '+ str(simulation.grid[0].dec))
