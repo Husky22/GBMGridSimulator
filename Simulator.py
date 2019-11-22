@@ -252,13 +252,13 @@ class Simulator():
 
     def generate_spectrum_from_function(self,det,source_function,background_function,response,ra,dec):
 
-        channel_set= ChannelSet.from_instrument_response(response[det])
+        channel_set= ChannelSet.from_instrument_response(response)
         energy_min, energy_max = channel_set.bin_stack.T
         fake_data=np.ones(len(energy_min))
-        n_energies=response[det].ebounds.shape[0]-1
-        observation=DispersionSpectrumLike._build_fake_observation(fake_data,channel_set,None,None,True,response=response[det])
+        n_energies=response.ebounds.shape[0]-1
+        observation=DispersionSpectrumLike._build_fake_observation(fake_data,channel_set,None,None,True,response=response)
 
-        tmp_background=BinnedSpectrum(np.ones(n_energies), exposure=1.,ebounds=response[det].ebounds,count_errors=None,sys_errors=None,quality=None,scale_factor=1.,is_poisson=True,mission='fake_mission',instrument='fake_instrument',tstart=0.,tstop=1.)
+        tmp_background=BinnedSpectrum(np.ones(n_energies), exposure=1.,ebounds=response.ebounds,count_errors=None,sys_errors=None,quality=None,scale_factor=1.,is_poisson=True,mission='fake_mission',instrument='fake_instrument',tstart=0.,tstop=1.)
         background_gen=SpectrumLike('generatorbkg',tmp_background,None,verbose=False)
         pts_background=PointSource('fake_background',0.0,0.0,background_function)
         background_model=Model(pts_background)
