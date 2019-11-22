@@ -303,7 +303,7 @@ class Simulator():
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.photon_counts[det][i,j]=generate_spectrum_from_function2(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
+                        gp.photon_counts[det][i,j]=generate_spectrum_from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
         os.chdir('../../')
 
 
