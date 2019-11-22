@@ -234,7 +234,7 @@ class Simulator():
         self.det_rsp=dict()
         os.chdir('rawdata/'+trigger)
         for det in det_list:
-            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det))
+            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det),tstart=0.,tstop=2.,time=0.)
 
             self.det_rsp[det] = rsp
 
@@ -258,7 +258,7 @@ class Simulator():
         n_energies=response.ebounds.shape[0]-1
         observation=DispersionSpectrumLike._build_fake_observation(fake_data,channel_set,None,None,True,response=response)
 
-        tmp_background=BinnedSpectrum(np.ones(n_energies), exposure=1.,ebounds=response.ebounds,count_errors=None,sys_errors=None,quality=None,scale_factor=1.,is_poisson=True,mission='fake_mission',instrument='fake_instrument',tstart=0.,tstop=1.)
+        tmp_background=BinnedSpectrum(np.ones(n_energies), exposure=1.,ebounds=response.ebounds,count_errors=None,sys_errors=None,quality=None,scale_factor=1.,is_poisson=True,mission='fake_mission',instrument='fake_instrument',tstart=0.,tstop=2.)
         background_gen=SpectrumLike('generatorbkg',tmp_background,None,verbose=False)
         pts_background=PointSource('fake_background',0.0,0.0,background_function)
         background_model=Model(pts_background)
@@ -289,7 +289,7 @@ class Simulator():
         self.det_rsp=dict()
         os.chdir('rawdata/'+trigger)
         for det in det_list:
-            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det))
+            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det),tstart=0.,tstop=2.,time=0.)
 
             self.det_rsp[det] = rsp
 
@@ -387,7 +387,7 @@ class GridPoint():
         print self.value_matrix
 
 
-    def add_j2000(self,sat_coord,sat_quat,time=0.):
+    def add_j2000(self,sat_coord,sat_quat,time=2.):
 
         """
         Calculate the corresponding Ra and Dec coordinates
