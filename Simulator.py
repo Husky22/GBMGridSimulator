@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import astromodels
 from threeML import *
+from threeML.utils.spectrum.binned_spectrum import BinnedSpectrumWithDispersion, ChannelSet, BinnedSpectrum
 import astropy.units as u
 import astropy.coordinates as coord
 from gbmgeometry import PositionInterpolator, GBM, GBMFrame, gbm_frame
@@ -248,6 +249,63 @@ class Simulator():
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
         os.chdir('../../')
+
+    def generate_spectrum_from_function(self,det,source_function,background_function,response,ra,dec):
+
+        fake_data=np.ones(len(energy_min))
+        channel_set= ChannelSet.from_instrument_response(response[det])
+        energy_min, energy_max = channel_set.bin_stack.T
+        fake_data=np.ones(len(energy_min))
+        n_energies=response[det].ebounds.shape[0]-1
+        observation=DispersionSpectrumLike._build_fake_observation(fake_data,channel_set,None,None,True,response=response[det])
+
+        tmp_background=BinnedSpectrum(np.ones(n_energies), exposure=1.,ebounds=response[det].ebounds,count_errors=None,sys_errors=None,quality=None,scale_factor=1.,is_poisson=True,mission='fake_mission',instrument='fake_instrument',tstart=0.,tstop=1.)
+        background_gen=SpectrumLike('generatorbkg',tmp_background,None,verbose=False)
+        pts_background=PointSource('fake_background',0.0,0.0,background_function)
+        background_model=Model(pts_background)
+        background_gen.set_model(background_model)
+        sim_background=background_gen.get_simulated_dataset('fake')
+        background=sim_background._observed_spectrum
+        speclike_gen=DispersionSpectrumLike('generator',observation,background=background)
+        pts=PointSource('fake',ra,dec,source_function)
+        model1=Model(pts)
+        speclike_gen.set_model(model1)
+        return speclike_gen.get_simulated_dataset(det)
+
+
+    def generate_TRIG_spectrum2(self,trigger="191017391"):
+        '''
+        Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
+        through it so that we get a simulated physical photon count spectrum
+
+        It uses sample TTE,TRIGDAT and CSPEC files to generate the DRMs
+
+        Generates for every GridPoint:
+        response
+        photon_counts
+
+        '''
+
+        det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
+        self.det_rsp=dict()
+        os.chdir('rawdata/'+trigger)
+        for det in det_list:
+            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det))
+
+            self.det_rsp[det] = rsp
+
+        for gp in self.grid:
+            ra, dec = gp.ra, gp.dec
+            for det in det_list:
+                gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
+                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                i=0
+                for i in range(np.shape(gp.spectrum_matrix)[0]):
+                    j=0
+                    for j in range(np.shape(gp.spectrum_matrix)[0]):
+                        gp.photon_counts[det][i,j]=generate_spectrum_from_function2(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],gp.ra,gp.dec)
+        os.chdir('../../')
+
 
     def generate_DRM_spectrum(self,trigger="191017391"):
         
