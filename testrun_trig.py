@@ -36,7 +36,8 @@ det_list_new=[]
 for det in det_list:
     print(simulation.grid[0].photon_counts[det][0,0].significance)
 
-sigval=input("Enter min Significance Value: ")
+#sigval=input("Enter min Significance Value: ")
+sigval=100
 
 for det in det_list:
     if det != 'b0' and det != 'b1':
