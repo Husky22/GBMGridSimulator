@@ -252,7 +252,6 @@ class Simulator():
 
     def generate_spectrum_from_function(self,det,source_function,background_function,response,ra,dec):
 
-        fake_data=np.ones(len(energy_min))
         channel_set= ChannelSet.from_instrument_response(response[det])
         energy_min, energy_max = channel_set.bin_stack.T
         fake_data=np.ones(len(energy_min))
@@ -303,7 +302,7 @@ class Simulator():
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.photon_counts[det][i,j]=generate_spectrum_from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
+                        gp.photon_counts[det][i,j]=self.generate_spectrum_from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
         os.chdir('../../')
 
 
