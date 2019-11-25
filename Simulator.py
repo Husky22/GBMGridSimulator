@@ -341,7 +341,7 @@ class Simulator():
         os.chdir('../../')
 
 
-    def generate_DRM_spectrum(self,trigger="191017391"):
+    def generate_DRM_spectrum(self,trigger="191017391",save=False):
         
         '''
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
@@ -352,6 +352,8 @@ class Simulator():
         Generates for every GridPoint:
         response
         response_generator
+
+        save: Save count spectra as pdf
 
         '''
 
@@ -373,10 +375,13 @@ class Simulator():
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+                        if save==True:
+                            gp.response_generator[det][i,j].view_count_spectrum().savefig("../../saves/"+det+"_"+str(i)+"_"+str(j)+".pdf")
+
         os.chdir('../../')
 
     def save(self,fname):
-        np.save(fname,self.grid)
+        np.save(fname,self.grid,allow_pickle=False)
 
     def load(self,fname):
         self.grid=np.load(fname,allow_pickle=True)
