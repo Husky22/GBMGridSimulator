@@ -227,7 +227,7 @@ class Simulator():
 
         Generates for every GridPoint:
         response
-        photon_counts
+        response_generator
 
         '''
 
@@ -243,12 +243,12 @@ class Simulator():
             ra, dec = gp.ra, gp.dec
             for det in det_list:
                 gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
-                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+                        gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
         os.chdir('../../')
 
     def generate_spectrum_DRMgiven(self,trigger="191017391"):
@@ -258,7 +258,7 @@ class Simulator():
 
         Generates for every GridPoint:
         response
-        photon_counts
+        response_generator
 
         '''
 
@@ -274,12 +274,12 @@ class Simulator():
             ra, dec = gp.ra, gp.dec
             for det in det_list:
                 gp.response[det]=self.det_rsp[det]
-                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+                        gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
         os.chdir('../../')
 
     def generate_spectrum_from_function(self,det,source_function,background_function,response,ra,dec):
@@ -316,7 +316,7 @@ class Simulator():
 
         Generates for every GridPoint:
         response
-        photon_counts
+        response_generator
 
         '''
 
@@ -332,12 +332,12 @@ class Simulator():
             ra, dec = gp.ra, gp.dec
             for det in det_list:
                 gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
-                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.photon_counts[det][i,j]=self.generate_spectrum_from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
+                        gp.response_generator[det][i,j]=self.generate_spectrum_from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
         os.chdir('../../')
 
 
@@ -351,7 +351,7 @@ class Simulator():
 
         Generates for every GridPoint:
         response
-        photon_counts
+        response_generator
 
         '''
 
@@ -367,12 +367,12 @@ class Simulator():
             ra, dec = gp.ra, gp.dec
             for det in det_list:
                 gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
-                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j=0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+                        gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
         os.chdir('../../')
 
     def save(self,fname):
@@ -393,7 +393,7 @@ class GridPoint():
         self.dim=dim
         self.j2000 = None
         self.response=dict()
-        self.photon_counts=dict()
+        self.response_generator=dict()
 
 
     def generate_spectrum(self,i_max,i_min,c_max,c_min,K):

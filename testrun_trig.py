@@ -46,27 +46,27 @@ rsp_time = 1.
 
 det_list_new = []
 for det in det_list:
-    print(simulation.grid[0].photon_counts[det][0, 0].significance)
+    print(simulation.grid[0].response_generator[det][0, 0].significance)
 
 #sigval=input("Enter min Significance Value: ")
 sigval=100
 
 for det in det_list:
     if det != 'b0' and det != 'b1':
-        simulation.grid[0].photon_counts[det][0, 0].set_active_measurements(
+        simulation.grid[0].response_generator[det][0, 0].set_active_measurements(
             '8.1-900')
     else:
-        simulation.grid[0].photon_counts[det][0, 0].set_active_measurements(
+        simulation.grid[0].response_generator[det][0, 0].set_active_measurements(
             '250-30000')
 
-    if simulation.grid[0].photon_counts[det][0, 0].significance > sigval:
+    if simulation.grid[0].response_generator[det][0, 0].significance > sigval:
         det_list_new.append(det)
 
 point = simulation.grid[0]
 
 for det in det_list_new:
     det_bl[det] = drm.BALROGLike.from_spectrumlike(
-        point.photon_counts[det][0, 0],
+        point.response_generator[det][0, 0],
         rsp_time,
         simulation.det_rsp[det],
         free_position=True)
