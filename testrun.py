@@ -1,4 +1,5 @@
 import os
+import operator
 from Simulator import *
 import numpy as np
 import chainconsumer
@@ -21,7 +22,8 @@ det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=1,background_function=Powerlaw(K=.1))
 # simulation.coulomb_refining(1000)
 simulation.generate_j2000()
-simulation.generate_spectrum_DRMgiven(trigger="131229277")
+simulation.generate_spectrum(trigger="131229277")
+simulation.save('spectrumgrid')
 with open("radec.txt",'wb') as f:
     f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
     f.write('DEC: '+ str(simulation.grid[0].dec))
@@ -33,14 +35,14 @@ with open('params.csv','w') as outfile:
 det_bl=dict()
 rsp_time=0.
 
-detsort=[]
+det_sig=dict()
 for det in det_list:
-    detsort.append(simulation.grid[0].response_generator[det][0,0].significance)
-sigval=sorted(detsort)[-3]-1
+    det_sig[det]=simulation.grid[0].photon_counts[det][0,0].significance
+det_list3=[]
+for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-3:]: det_list3.append(tuple[0])
 
-print sigval
 det_list_new=[]
-for det in det_list:
+for det in det_list3:
     if det != 'b0' and det != 'b1':
         simulation.grid[0].response_generator[det][0,0].set_active_measurements('8.1-900')
     else:
@@ -51,7 +53,7 @@ for det in det_list:
 
 point=simulation.grid[0]
 
-for det in det_list_new:
+for det in det_list3:
     det_bl[det]=drm.BALROGLike.from_spectrumlike(point.response_generator[det][0,0],rsp_time,simulation.det_rsp[det],free_position=True)
 
 data = DataList(*det_bl.values())

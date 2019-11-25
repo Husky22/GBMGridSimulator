@@ -49,7 +49,7 @@ for det in det_list:
     print(simulation.grid[0].response_generator[det][0, 0].significance)
 
 #sigval=input("Enter min Significance Value: ")
-sigval=100
+sigval=10
 
 for det in det_list:
     if det != 'b0' and det != 'b1':
