@@ -150,7 +150,7 @@ class Simulator():
             self.grid[i].update_coord(particles[i])
 
 
-    def setup(self,irange=[-1.5,-1],crange=[100,400],K=50,algorithm='Fibonacci',background_function=Powerlaw(K=1.,index=-1.5,piv=100.)):
+    def setup(self,irange=[-1.5,-1],crange=[100,400],K=50,algorithm='Fibonacci',background_function=Powerlaw(K=1.,index=-1.5)):
         '''
         Setup grid, spectrum matrices and the the background function
         '''
@@ -412,14 +412,14 @@ class GridPoint():
         for index_i in index:
             j=0
             for cutoff_i in cutoff:
-                self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=K,index=index_i,piv=100,xc=cutoff_i)
+                self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=K,index=index_i,xc=cutoff_i)
                 self.value_matrix_string[i,j]=u"Index="+unicode(round(index_i,3))+u";Cutoff="+unicode(cutoff_i)
                 self.value_matrix[i,j]["K"]=K
                 self.value_matrix[i,j]["xc"]=cutoff_i
                 self.value_matrix[i,j]["index"]=index_i
                 j+=1
             i+=1
-        print self.value_matrix
+        print(self.value_matrix)
 
 
     def add_j2000(self,sat_coord,sat_quat,time=2.):
