@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import astromodels
 from threeML import *
 from threeML.utils.spectrum.binned_spectrum import BinnedSpectrumWithDispersion, ChannelSet, BinnedSpectrum
+from threeML.utils.OGIP.response import OGIPResponse
 import astropy.units as u
 import astropy.coordinates as coord
 from gbmgeometry import PositionInterpolator, GBM, GBMFrame, gbm_frame
@@ -222,7 +223,7 @@ class Simulator():
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
         through it so that we get a simulated physical photon count spectrum
 
-        It uses sample TTE,TRIGDAT and CSPEC files to generate the DRMs
+        It uses sample TRIGDAT file
 
         Generates for every GridPoint:
         response
@@ -250,7 +251,41 @@ class Simulator():
                         gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
         os.chdir('../../')
 
+    def generate_spectrum_DRMgiven(self,trigger="191017391"):
+        '''
+        Test for Error finding in DRM generation
+
+
+        Generates for every GridPoint:
+        response
+        photon_counts
+
+        '''
+
+        det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
+        self.det_rsp=dict()
+        os.chdir('rawdata/'+trigger)
+        for det in det_list:
+            rsp = OGIPResponse(glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.rsp')[0])
+
+            self.det_rsp[det] = rsp
+
+        for gp in self.grid:
+            ra, dec = gp.ra, gp.dec
+            for det in det_list:
+                gp.response[det]=self.det_rsp[det]
+                gp.photon_counts[det]=np.empty(gp.dim,dtype=classmethod)
+                i=0
+                for i in range(np.shape(gp.spectrum_matrix)[0]):
+                    j=0
+                    for j in range(np.shape(gp.spectrum_matrix)[0]):
+                        gp.photon_counts[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
+        os.chdir('../../')
+
     def generate_spectrum_from_function(self,det,source_function,background_function,response,ra,dec):
+        '''
+        An alternative Spectrum Generator derived from older 3ML version
+        '''
 
         channel_set= ChannelSet.from_instrument_response(response)
         energy_min, energy_max = channel_set.bin_stack.T
