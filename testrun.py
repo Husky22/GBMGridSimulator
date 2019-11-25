@@ -36,7 +36,7 @@ rsp_time=0.
 
 det_sig=dict()
 for det in det_list:
-    det_sig[det]=simulation.grid[0].photon_counts[det][0,0].significance
+    det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
 det_list3=[]
 for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-3:]: det_list3.append(tuple[0])
 
@@ -47,8 +47,6 @@ for det in det_list3:
     else:
         simulation.grid[0].response_generator[det][0,0].set_active_measurements('250-30000')
 
-    if simulation.grid[0].response_generator[det][0,0].significance>sigval:
-        det_list_new.append(det)
 
 point=simulation.grid[0]
 
