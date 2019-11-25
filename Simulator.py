@@ -266,14 +266,14 @@ class Simulator():
         self.det_rsp=dict()
         os.chdir('rawdata/'+trigger)
         for det in det_list:
-            rsp = OGIPResponse(glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.rsp')[0])
+            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det),tstart=0.,tstop=2.,time=0.)
 
             self.det_rsp[det] = rsp
 
         for gp in self.grid:
             ra, dec = gp.ra, gp.dec
             for det in det_list:
-                gp.response[det]=self.det_rsp[det]
+                gp.response[det]=OGIPResponse(glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.rsp')[0])
                 gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
                 for i in range(np.shape(gp.spectrum_matrix)[0]):

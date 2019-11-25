@@ -35,24 +35,24 @@ rsp_time=0.
 
 detsort=[]
 for det in det_list:
-    detsort.append(simulation.grid[0].response_generator[det][0,0].significance)
+    detsort.append(simulation.grid[0]response_gen[det][0,0].significance)
 sigval=sorted(detsort)[-3]-1
 
 print sigval
 det_list_new=[]
 for det in det_list:
     if det != 'b0' and det != 'b1':
-        simulation.grid[0]..response_generator[det][0,0].set_active_measurements('8.1-900')
+        simulation.grid[0].response_gen[det][0,0].set_active_measurements('8.1-900')
     else:
-        simulation.grid[0]..response_generator[det][0,0].set_active_measurements('250-30000')
+        simulation.grid[0].response_gen[det][0,0].set_active_measurements('250-30000')
 
-    if simulation.grid[0]..response_generator[det][0,0].significance>sigval:
+    if simulation.grid[0].response_gen[det][0,0].significance>sigval:
         det_list_new.append(det)
 
 point=simulation.grid[0]
 
 for det in det_list_new:
-    det_bl[det]=drm.BALROGLike.from_spectrumlike(point..response_generator[det][0,0],rsp_time,simulation.det_rsp[det],free_position=True)
+    det_bl[det]=drm.BALROGLike.from_spectrumlike(point.response_gen[det][0,0],rsp_time,simulation.det_rsp[det],free_position=True)
 
 data = DataList(*det_bl.values())
 
