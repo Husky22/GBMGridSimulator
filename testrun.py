@@ -11,7 +11,7 @@ rank=mpi.Get_rank()
 
 import warnings
 warnings.simplefilter('ignore')
-
+np.random.seed(100)
 
 n_objects=1
 spectrumgrid=[1,1]
@@ -19,13 +19,10 @@ trigdat=glob("rawdata/131229277/glg_trigdat_all_bn131229277_v0*.fit")[0]
 simulation=Simulator(n_objects,spectrumgrid,trigdat)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 
-simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=1,background_function=Powerlaw(K=.1))
+simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
 # simulation.coulomb_refining(1000)
 simulation.generate_j2000()
 simulation.generate_DRM_spectrum(trigger="131229277",save=True)
-with open("radec.txt",'wb') as f:
-    f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
-    f.write('DEC: '+ str(simulation.grid[0].dec))
 with open('params.csv','w') as outfile:
     for x in simulation.grid[0].value_matrix:
         np.savetxt(outfile,x,fmt='%.5f,%f,%f',header='K,xc,index',delimiter=",",comments='')
@@ -38,7 +35,7 @@ det_sig=dict()
 for det in det_list:
     det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
 det_list3=[]
-for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-3:]: det_list3.append(tuple[0])
+for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-4:]: det_list3.append(tuple[0])
 
 det_list_new=[]
 for det in det_list3:
@@ -47,6 +44,11 @@ for det in det_list3:
     else:
         simulation.grid[0].response_generator[det][0,0].set_active_measurements('250-30000')
 
+with open("radec.txt",'wb') as f:
+    f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
+    f.write('DEC: '+ str(simulation.grid[0].dec)+'\n')
+    f.write('Detectors: ')  
+    f.write('['+",".join(det_list3)+']')
 
 point=simulation.grid[0]
 
@@ -58,7 +60,7 @@ data = DataList(*det_bl.values())
 ra = 10.
 dec = 10.
 
-cpl = Cutoff_powerlaw()
+cpl = Cutoff_powerlaw(piv=100.)
 cpl.K.prior = Log_uniform_prior()
 cpl.K.prior.lower_bound=1e-3
 cpl.K.prior.upper_bound=1e3
@@ -68,7 +70,8 @@ model = Model(PointSource('grb',ra,dec,spectral_shape=cpl))
 bayes = BayesianAnalysis(model, data)
 wrap = [0]*len(model.free_parameters)
 wrap[0] = 1
-_ =bayes.sample_multinest(400,chain_name='chains/',
+
+_ =bayes.sample_multinest(600,chain_name='chains/',
                         importance_nested_sampling=False,
                         const_efficiency_mode=False,
                         wrapped_params=wrap,
