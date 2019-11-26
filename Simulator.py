@@ -378,7 +378,10 @@ class Simulator():
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
                         if save==True:
-                            gp.response_generator[det][i,j].write_pha("../../saved_pha/"+gp.name+"/"+det+"_"+str(i)+"_"+str(j)+".pdf",overwrite=True,force_rsp_write=True)
+                            dirpath="../../saved_pha/"+gp.name
+                            if not os.path.exists(dirpath):
+                                os.makedirs(dirpath)
+                            gp.response_generator[det][i,j].write_pha(dirpath+"/"+det+"_"+str(i)+"_"+str(j)+".pdf",overwrite=True,force_rsp_write=True)
 
         os.chdir('../../')
 
