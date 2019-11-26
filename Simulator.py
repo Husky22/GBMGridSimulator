@@ -55,7 +55,7 @@ class Simulator():
                 phi=((i+rnd)%samples)*increment
                 x=math.cos(phi)*r
                 z=math.sin(phi)*r
-                points.append(GridPoint([x,y,z],self.spectrum_dimension))
+                points.append(GridPoint('gp'+str(i),[x,y,z],self.spectrum_dimension))
             return np.array(points)
 
 
@@ -92,7 +92,7 @@ class Simulator():
             y=np.cos(p1)*np.sin(p2)
             z=np.sin(p1)
 
-            points.append(GridPoint([x,y,z],self.spectrum_dimension))
+            points.append(GridPoint('gp'+str(i),[x,y,z],self.spectrum_dimension))
 
         return np.array(points)
 
@@ -378,14 +378,14 @@ class Simulator():
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
                         if save==True:
-                            gp.response_generator[det][i,j].write_pha("../../saves/"+det+"_"+str(i)+"_"+str(j)+".pdf")
+                            gp.response_generator[det][i,j].write_pha("../../saves/"+det+"_"+str(i)+"_"+str(j)+".pdf",force_rsp_write=True)
 
         os.chdir('../../')
 
     def save(self,fname):
         np.save(fname,self.grid,allow_pickle=False)
 
-    def load(self,fname):
+    def load_DRM_spectrum(self,fname):
         self.grid=np.load(fname,allow_pickle=True)
 
 
@@ -395,7 +395,8 @@ class GridPoint():
     One point in the simulation grid.
     '''
 
-    def __init__(self,coord,dim):
+    def __init__(self,name,coord,dim):
+        self.name=name
         self.coord = coord
         self.dim=dim
         self.j2000 = None
