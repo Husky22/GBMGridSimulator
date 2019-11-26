@@ -1,3 +1,5 @@
+import matplotlib as mpl
+mpl.use('Agg')
 import random
 import pandas as pd
 import numpy as np
@@ -376,7 +378,7 @@ class Simulator():
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
                         if save==True:
-                            gp.response_generator[det][i,j].view_count_spectrum().savefig("../../saves/"+det+"_"+str(i)+"_"+str(j)+".pdf")
+                            gp.response_generator[det][i,j].write_pha("../../saves/"+det+"_"+str(i)+"_"+str(j)+".pdf")
 
         os.chdir('../../')
 
