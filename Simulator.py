@@ -381,7 +381,7 @@ class Simulator():
                             dirpath="../../saved_pha/"+gp.name
                             if not os.path.exists(dirpath):
                                 os.makedirs(dirpath)
-                            gp.response_generator[det][i,j].write_pha(dirpath+"/"+det+"_"+str(i)+"_"+str(j),overwrite=True,force_rsp_write=True)
+                            gp.response_generator[det][i,j].write_pha(dirpath+"/"+det+"_"+str(i)+"_"+str(j),overwrite=True)
 
         os.chdir('../../')
 
