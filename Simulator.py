@@ -417,7 +417,7 @@ class GridPoint():
         for index_i in index:
             j=0
             for cutoff_i in cutoff:
-                self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=K,index=index_i,xc=cutoff_i)
+                self.spectrum_matrix[i,j]= astromodels.Cutoff_powerlaw(K=K,index=index_i,xc=cutoff_i,piv=100.)
                 self.value_matrix_string[i,j]=u"Index="+unicode(round(index_i,3))+u";Cutoff="+unicode(cutoff_i)
                 self.value_matrix[i,j]["K"]=K
                 self.value_matrix[i,j]["xc"]=cutoff_i

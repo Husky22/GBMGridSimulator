@@ -22,7 +22,7 @@ det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
 simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
 # simulation.coulomb_refining(1000)
 simulation.generate_j2000()
-simulation.generate_DRM_spectrum(trigger="131229277",save=True)
+simulation.generate_DRM_spectrum(trigger="131229277")
 with open('params.csv','w') as outfile:
     for x in simulation.grid[0].value_matrix:
         np.savetxt(outfile,x,fmt='%.5f,%f,%f',header='K,xc,index',delimiter=",",comments='')
@@ -71,6 +71,7 @@ bayes = BayesianAnalysis(model, data)
 wrap = [0]*len(model.free_parameters)
 wrap[0] = 1
 
+mpi.scatter(wrap,root=0)
 _ =bayes.sample_multinest(600,chain_name='chains/',
                         importance_nested_sampling=False,
                         const_efficiency_mode=False,
