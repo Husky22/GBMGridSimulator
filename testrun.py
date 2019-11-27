@@ -66,7 +66,7 @@ i=0
 for gp in simulation.grid:
     gp.update_coord(coord_list[i])
     i+=1
-os.chdir("/home/niklas/Dokumente/Bachelor/Python/PythonScripts/SimulatorSetup")
+os.chdir("/home/niklasvm/Envs/Simulator/GBMGridSimulator")
 simulation.generate_j2000()
 
 simulation.load_DRM_spectrum()
