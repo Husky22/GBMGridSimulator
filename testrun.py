@@ -21,7 +21,7 @@ det_bl=dict()
 rsp_time=0.
 
 if rank==0:
-    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=20.))
+    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=10.,piv=100))
     # simulation.coulomb_refining(1000)
     simulation.generate_j2000()
     simulation.generate_DRM_spectrum(trigger="131229277",save=True)
@@ -32,7 +32,8 @@ if rank==0:
 
 
     det_sig=dict()
-    for det in det_list:
+        
+    det_sig={(gp.name,det,str(i),str(j)):gp.response_generator[det][0,0].significance for det in det_list for gp in simulation.grid for (i,j),value in np.ndenumerate(gp.value_matrix)}
         det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
     det_list3=[]
     for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-4:]: det_list3.append(tuple[0])
@@ -61,7 +62,7 @@ else:
 coord_list=mpi.bcast(coord_list,root=0)
 det_list3=mpi.bcast(det_list3,root=0)
 if not mpi.rank==0:
-    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=20))
+    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=10,piv=100))
 i=0
 for gp in simulation.grid:
     gp.update_coord(coord_list[i])
