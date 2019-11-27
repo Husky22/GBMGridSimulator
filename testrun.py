@@ -71,7 +71,7 @@ simulation.generate_j2000()
 
 simulation.load_DRM_spectrum()
 point=simulation.grid[0]
-
+det_sig[det]=dict()
 for det in det_list:
     det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
 print(det_sig)
