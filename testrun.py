@@ -21,7 +21,7 @@ det_bl=dict()
 rsp_time=0.
 
 if rank==0:
-    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
+    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=20.))
     # simulation.coulomb_refining(1000)
     simulation.generate_j2000()
     simulation.generate_DRM_spectrum(trigger="131229277",save=True)
@@ -61,7 +61,7 @@ else:
 coord_list=mpi.bcast(coord_list,root=0)
 det_list3=mpi.bcast(det_list3,root=0)
 if not mpi.rank==0:
-    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
+    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=20))
 i=0
 for gp in simulation.grid:
     gp.update_coord(coord_list[i])
@@ -72,6 +72,9 @@ simulation.generate_j2000()
 simulation.load_DRM_spectrum()
 point=simulation.grid[0]
 
+for det in det_list:
+    det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
+print(det_sig)
 for det in det_list3:
     det_bl[det]=drm.BALROGLike.from_spectrumlike(point.response_generator[det][0,0],rsp_time,simulation.det_rsp[det],free_position=True)
 
@@ -100,12 +103,11 @@ _ =bayes.sample_multinest(600,chain_name='chains/',
 if rank==0:
     bayes.results.write_to('location_results2.fits', overwrite=True) 
 
-res=bayes.results
-str_path=os.getcwd()
-print(str_path)
+    res=bayes.results
+    str_path=os.getcwd()
 
-cc_plot=res.corner_plot_cc();
-cc_plot.savefig(str_path+'/cc_plot_test.pdf')
-spectrum_plot=display_spectrum_model_counts(bayes,step=False);
-spectrum_plot.savefig(str_path+'/spectrum_plot_test.pdf')
+    cc_plot=res.corner_plot_cc();
+    cc_plot.savefig(str_path+'/cc_plot_test.pdf')
+    spectrum_plot=display_spectrum_model_counts(bayes,step=False);
+    spectrum_plot.savefig(str_path+'/spectrum_plot_test.pdf')
 
