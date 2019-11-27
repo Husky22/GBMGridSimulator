@@ -11,45 +11,65 @@ rank=mpi.Get_rank()
 
 import warnings
 warnings.simplefilter('ignore')
-np.random.seed(100)
 
 n_objects=1
 spectrumgrid=[1,1]
 trigdat=glob("rawdata/131229277/glg_trigdat_all_bn131229277_v0*.fit")[0]
 simulation=Simulator(n_objects,spectrumgrid,trigdat)
 det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
-
-simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
-# simulation.coulomb_refining(1000)
-simulation.generate_j2000()
-simulation.generate_DRM_spectrum(trigger="131229277")
-with open('params.csv','w') as outfile:
-    for x in simulation.grid[0].value_matrix:
-        np.savetxt(outfile,x,fmt='%.5f,%f,%f',header='K,xc,index',delimiter=",",comments='')
-
-
 det_bl=dict()
 rsp_time=0.
 
-det_sig=dict()
-for det in det_list:
-    det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
-det_list3=[]
-for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-4:]: det_list3.append(tuple[0])
+if rank==0:
+    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
+    # simulation.coulomb_refining(1000)
+    simulation.generate_j2000()
+    simulation.generate_DRM_spectrum(trigger="131229277",save=True)
+    with open('params.csv','w') as outfile:
+        for x in simulation.grid[0].value_matrix:
+            np.savetxt(outfile,x,fmt='%.5f,%f,%f',header='K,xc,index',delimiter=",",comments='')
 
-det_list_new=[]
-for det in det_list3:
-    if det != 'b0' and det != 'b1':
-        simulation.grid[0].response_generator[det][0,0].set_active_measurements('8.1-900')
-    else:
-        simulation.grid[0].response_generator[det][0,0].set_active_measurements('250-30000')
 
-with open("radec.txt",'wb') as f:
-    f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
-    f.write('DEC: '+ str(simulation.grid[0].dec)+'\n')
-    f.write('Detectors: ')  
-    f.write('['+",".join(det_list3)+']')
 
+    det_sig=dict()
+    for det in det_list:
+        det_sig[det]=simulation.grid[0].response_generator[det][0,0].significance
+    det_list3=[]
+    for tuple in sorted(det_sig.items(),key=operator.itemgetter(1))[-4:]: det_list3.append(tuple[0])
+
+    det_list_new=[]
+    for det in det_list3:
+        if det != 'b0' and det != 'b1':
+            simulation.grid[0].response_generator[det][0,0].set_active_measurements('8.1-900')
+        else:
+            simulation.grid[0].response_generator[det][0,0].set_active_measurements('250-30000')
+
+    with open("radec.txt",'wb') as f:
+        f.write('RA: '+ str(simulation.grid[0].ra)+'\n')
+        f.write('DEC: '+ str(simulation.grid[0].dec)+'\n')
+        f.write('Detectors: ')  
+        f.write('['+",".join(det_list3)+']')
+
+    coord_list=[]
+    for gp in simulation.grid:
+        coord_list.append(gp.coord)
+
+else:
+    coord_list=[]
+    det_list3=[]
+
+coord_list=mpi.bcast(coord_list,root=0)
+det_list3=mpi.bcast(det_list3,root=0)
+if not mpi.rank==0:
+    simulation.setup(algorithm='Fibonacci',irange=[-1.6,-1],crange=[50,150],K=50,background_function=Powerlaw(K=.1))
+i=0
+for gp in simulation.grid:
+    gp.update_coord(coord_list[i])
+    i+=1
+os.chdir("/home/niklas/Dokumente/Bachelor/Python/PythonScripts/SimulatorSetup")
+simulation.generate_j2000()
+
+simulation.load_DRM_spectrum()
 point=simulation.grid[0]
 
 for det in det_list3:
@@ -71,7 +91,6 @@ bayes = BayesianAnalysis(model, data)
 wrap = [0]*len(model.free_parameters)
 wrap[0] = 1
 
-mpi.scatter(wrap,root=0)
 _ =bayes.sample_multinest(600,chain_name='chains/',
                         importance_nested_sampling=False,
                         const_efficiency_mode=False,

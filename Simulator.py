@@ -26,6 +26,9 @@ class Simulator():
     Fermi GBM Simulator
 
     """
+    global det_list
+    det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
+
 
     def __init__(self,source_number, spectrum_matrix_dimensions,trigfile):
         self.N=source_number
@@ -165,23 +168,34 @@ class Simulator():
         if algorithm=='Fibonacci':
             self.grid = self.fibonacci_sphere()
             if self.j2000_generate==True:
-                self.generate_j2000(self.trigfile)
+                self.generate_j2000()
 
 
 
         elif algorithm=='ModifiedFibonacci':
             self.grid = self.voronoi_sphere()
             if self.j2000_generate==True:
-                self.generate_j2000(self.trigfile)
+                self.generate_j2000()
 
         for point in self.grid:
             point.generate_spectrum(i_min=float(min(irange)),i_max=float(max(irange)),c_min=float(min(crange)),c_max=float(max(crange)),K=K)
+
+        
+        trigger="131229277"#TODO: Set variable in setup or get from Trigfile
+        self.det_rsp=dict()
+        os.chdir('rawdata/'+trigger)
+        for det in det_list:
+            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+trigger+'_v0*.fit.gz')[0],trigdat=glob('glg_trigdat_all_bn'+trigger+'_v0*.fit')[0],mat_type=2,cspecfile=glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.pha')[0])
+
+            self.det_rsp[det] = rsp
+        os.chdir("../../")
 
     
     def generate_j2000(self,time=0.):
         '''
         Calculate Ra and Dec Values
         '''
+        print(os.getcwd())
         position_interpolator= PositionInterpolator(trigdat=self.trigfile)
         # fermi=GBM(position_interpolator.quaternion(time),
         #           position_interpolator.sc_pos(time) * u.km)
@@ -278,68 +292,10 @@ class Simulator():
                 gp.response[det]=OGIPResponse(glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.rsp')[0])
                 gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
-                for i in range(np.shape(gp.spectrum_matrix)[0]):
+                for i in range(gp.dim[0]):
                     j=0
-                    for j in range(np.shape(gp.spectrum_matrix)[0]):
+                    for j in range(gp.dim[1]):
                         gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
-        os.chdir('../../')
-
-    def generate_spectrum_from_function(self,det,source_function,background_function,response,ra,dec):
-        '''
-        An alternative Spectrum Generator derived from older 3ML version
-        '''
-
-        channel_set= ChannelSet.from_instrument_response(response)
-        energy_min, energy_max = channel_set.bin_stack.T
-        fake_data=np.ones(len(energy_min))
-        n_energies=response.ebounds.shape[0]-1
-        observation=DispersionSpectrumLike._build_fake_observation(fake_data,channel_set,None,None,True,response=response)
-
-        tmp_background=BinnedSpectrum(np.ones(n_energies), exposure=1.,ebounds=response.ebounds,count_errors=None,sys_errors=None,quality=None,scale_factor=1.,is_poisson=True,mission='fake_mission',instrument='fake_instrument',tstart=0.,tstop=2.)
-        background_gen=SpectrumLike('generatorbkg',tmp_background,None,verbose=False)
-        pts_background=PointSource('fake_background',0.0,0.0,background_function)
-        background_model=Model(pts_background)
-        background_gen.set_model(background_model)
-        sim_background=background_gen.get_simulated_dataset('fake')
-        background=sim_background._observed_spectrum
-        speclike_gen=DispersionSpectrumLike('generator',observation,background=background)
-        pts=PointSource('fake',ra,dec,source_function)
-        model1=Model(pts)
-        speclike_gen.set_model(model1)
-        return speclike_gen.get_simulated_dataset(det)
-
-
-    def generate_TRIG_spectrum2(self,trigger="191017391"):
-        '''
-        Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
-        through it so that we get a simulated physical photon count spectrum
-
-        It uses sample TTE,TRIGDAT and CSPEC files to generate the DRMs
-
-        Generates for every GridPoint:
-        response
-        response_generator
-
-        '''
-
-        det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
-        self.det_rsp=dict()
-        os.chdir('rawdata/'+trigger)
-        for det in det_list:
-            rsp = drm.drmgen_trig.DRMGenTrig(self.sat_quat,self.sat_coord,det_list.index(det),tstart=0.,tstop=2.,time=0.)
-
-            self.det_rsp[det] = rsp
-
-        for gp in self.grid:
-            ra, dec = gp.ra, gp.dec
-            for det in det_list:
-                gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
-                gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
-                i=0
-                for i in range(np.shape(gp.spectrum_matrix)[0]):
-                    j=0
-                    for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.response_generator[det][i,j]=self.generate_spectrum_from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det],ra=gp.ra,dec=gp.dec)
         os.chdir('../../')
 
 
@@ -359,13 +315,7 @@ class Simulator():
 
         '''
 
-        det_list=['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','na','nb','b0','b1']
-        self.det_rsp=dict()
-        os.chdir('rawdata/'+trigger)
-        for det in det_list:
-            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+trigger+'_v0*.fit.gz')[0],trigdat=glob('glg_trigdat_all_bn'+trigger+'_v0*.fit')[0],mat_type=2,cspecfile=glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.pha')[0])
-
-            self.det_rsp[det] = rsp
+        
 
         for gp in self.grid:
             ra, dec = gp.ra, gp.dec
@@ -373,9 +323,9 @@ class Simulator():
                 gp.response[det]=self.det_rsp[det].to_3ML_response(ra,dec)
                 gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
                 i=0
-                for i in range(np.shape(gp.spectrum_matrix)[0]):
+                for i in range(gp.dim[0]):
                     j=0
-                    for j in range(np.shape(gp.spectrum_matrix)[0]):
+                    for j in range(gp.dim[1]):
                         gp.response_generator[det][i,j]=DispersionSpectrumLike.from_function(det,source_function=gp.spectrum_matrix[i,j],background_function=self.background,response=gp.response[det])
                         if save==True:
                             dirpath="../../saved_pha/"+gp.name
@@ -388,8 +338,33 @@ class Simulator():
     def save(self,fname):
         np.save(fname,self.grid,allow_pickle=False)
 
-    def load_DRM_spectrum(self,fname):
-        self.grid=np.load(fname,allow_pickle=True)
+    def load_DRM_spectrum(self):
+        i_list=[]
+        j_list=[]
+        dirs=0
+        for _,dirnames,filenames in os.walk("saved_pha/"):
+            for filename in filenames:
+                i_list.append(filename.split("_")[1])
+                j_list.append(filename.split("_")[2][0])
+            dirs+=len(dirnames)
+
+        assert len(self.grid)==dirs, "Number of gridpoints do not coincide"
+        assert int(max(i_list))==self.spectrum_dimension[0]-1 and int(max(j_list))==self.spectrum_dimension[1]-1 , "Dimensions do not coincide"
+
+        os.chdir("saved_pha/")
+        for gp in self.grid:
+
+            for det in det_list:
+                gp.response_generator[det]=np.empty(gp.dim,dtype=classmethod)
+                i=0
+                for i in range(gp.dim[0]):
+                    j=0
+                    for j in range(gp.dim[1]):
+                        file_name=det+"_"+str(i)+"_"+str(j)
+                        file_path=gp.name + "/" + file_name
+
+                        gp.response_generator[det][i,j]=OGIPLike(gp.name+"_"+file_name,observation=file_path+".pha",background=file_path+"_bak.pha",response=file_path+".rsp",spectrum_number=1)
+        os.chdir("../")
 
 
 class GridPoint():
