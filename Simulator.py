@@ -318,7 +318,7 @@ class Simulator():
             for i in range(gp.dim[0]):
                 j = 0
                 for j in range(gp.dim[1]):
-                    iterate_signal_to_noise(i,j)
+                    self.iterate_signal_to_noise(gp,i,j)
                     for det in det_list:
                         gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
                         if save == True:
@@ -330,21 +330,23 @@ class Simulator():
 
         os.chdir('../../')
 
-    def iterate_signal_to_noise(self, i, j, snr=20.):
+    def iterate_signal_to_noise(self, gp, i, j, snr=20.):
 
-        e=1.
+        e=0.01
         bgk_K=20
 
-        while abs((calc_sig_max(bgk_K, i, j)/snr)-1) >e:
-            bgk_K*=snr/calc_sig_max(bgk_K, i, j)
+        while abs((self.calc_sig_max(bgk_K, gp, i, j)/snr)-1) > e:
+            print("Relation detector: "+str(abs(self.calc_sig_max(bgk_K, gp, i, j)/snr-1)))
+            bgk_K*=snr/self.calc_sig_max(bgk_K, gp, i, j)
+            print("New K: "+ str(bgk_K))
 
-        gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
 
-    def calc_sig_max(self, bgk_K, i, j):
+    def calc_sig_max(self, bgk_K, gp, i, j):
         siglist=[]
         for det in det_list:
-            gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(bgk_K), response=gp.response[det])}
+            gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(K=bgk_K), response=gp.response[det])}
             siglist.append(gp.response_generator[det][i,j]['generator'].significance)
+        print("Sigmax: " + str(max(siglist)))
         return max(siglist)
 
     def load_DRM_spectrum(self):
@@ -396,7 +398,7 @@ class GridPoint():
         self.response = dict()
         self.response_generator = dict()
 
-    def generate_spectrum(self, i_max, i_min, c_max, c_min, K):
+    def generate_am_spectrum(self, i_max, i_min, c_max, c_min, K):
         """
         Compute sample cutoff powerlaw spectra
         spectrum_matrix:
