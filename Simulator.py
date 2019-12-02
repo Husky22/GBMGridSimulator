@@ -148,7 +148,7 @@ class Simulator():
         for i in range(len(self.grid)):
             self.grid[i].update_coord(particles[i])
 
-    def setup(self, irange=[-1.5, -1], crange=[100, 400], K=50, algorithm='Fibonacci', background_function=Powerlaw(K=1., index=-1.5)):
+    def setup(self, irange=[-1.5, -1], crange=[100, 400], K=50, algorithm='Fibonacci' ):
         '''
         Setup the GRB grid the spectrum matrices
         and the background function for your Simulation
@@ -156,7 +156,6 @@ class Simulator():
 
         self.indexrange = irange
         self.cutoffrange = crange
-        self.background = background_function
 
         if algorithm == 'Fibonacci':
             self.grid = self.fibonacci_sphere()
@@ -294,7 +293,7 @@ class Simulator():
                             det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
         os.chdir('../../')
 
-    def generate_DRM_spectrum(self, trigger="191017391", save=False):
+    def generate_DRM_spectrum(self, trigger="191017391", save=False, snr=20., e=1.):
         '''
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
         through it so that we get a simulated physical photon count spectrum
@@ -319,8 +318,8 @@ class Simulator():
             for i in range(gp.dim[0]):
                 j = 0
                 for j in range(gp.dim[1]):
+                    iterate_signal_to_noise(i,j)
                     for det in det_list:
-                        gp.response_generator[det][i, j] ={"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])}
                         gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
                         if save == True:
                             dirpath = "saved_pha/"+gp.name
@@ -331,8 +330,22 @@ class Simulator():
 
         os.chdir('../../')
 
-    def save(self, fname):
-        np.save(fname, self.grid, allow_pickle=False)
+    def iterate_signal_to_noise(self, i, j, snr=20.):
+
+        e=1.
+        bgk_K=20
+
+        while abs((calc_sig_max(bgk_K, i, j)/snr)-1) >e:
+            bgk_K=*snr/calc_sig_max(bgk_K, i, j)
+
+        gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
+
+    def calc_sig_max(self, bgk_K, i, j):
+        siglist=[]
+        for det in det_list:
+            gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(bgk_K), response=gp.response[det])}
+            siglist.append(gp.response_generator[det][i,j]['generator'].significance)
+       return max(siglist)
 
     def load_DRM_spectrum(self):
         '''
@@ -409,14 +422,15 @@ class GridPoint():
         for index_i in index:
             j = 0
             for cutoff_i in cutoff:
-                self.spectrum_matrix[i, j] = astromodels.Cutoff_powerlaw(
-                    K=K, index=index_i, xc=cutoff_i, piv=100.)
-                self.value_matrix_string[i, j] = u"Index=" + \
-                    unicode(round(index_i, 3))+u";Cutoff="+unicode(cutoff_i)
-                self.value_matrix[i, j]["K"] = K
-                self.value_matrix[i, j]["xc"] = cutoff_i
-                self.value_matrix[i, j]["index"] = index_i
-                j += 1
+                self.spectrum_matrix[i, j] = astromodels.Band_Calderone(F=K)
+                #self.spectrum_matrix[i, j] = astromodels.Cutoff_powerlaw(
+                #    K=K, index=index_i, xc=cutoff_i, piv=100.)
+                # self.value_matrix_string[i, j] = u"Index=" + \
+                #     unicode(round(index_i, 3))+u";Cutoff="+unicode(cutoff_i)
+                # self.value_matrix[i, j]["K"] = K
+                # self.value_matrix[i, j]["xc"] = cutoff_i
+                # self.value_matrix[i, j]["index"] = index_i
+                # j += 1
             i += 1
         print(self.value_matrix)
 
