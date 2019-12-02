@@ -336,7 +336,7 @@ class Simulator():
         bgk_K=20
 
         while abs((calc_sig_max(bgk_K, i, j)/snr)-1) >e:
-            bgk_K=*snr/calc_sig_max(bgk_K, i, j)
+            bgk_K*=snr/calc_sig_max(bgk_K, i, j)
 
         gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
 
