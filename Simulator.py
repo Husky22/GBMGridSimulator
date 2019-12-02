@@ -257,43 +257,8 @@ class Simulator():
                             det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
         os.chdir('../../')
 
-    def generate_spectrum_DRMgiven(self, trigger="191017391"):
-        '''
-        Test for Error finding in DRM generation
 
-
-        Generates for every GridPoint:
-        response
-        response_generator
-
-        '''
-
-        det_list = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5',
-                    'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
-        self.det_rsp = dict()
-        os.chdir('rawdata/'+trigger)
-        for det in det_list:
-            rsp = drm.drmgen_trig.DRMGenTrig(
-                self.sat_quat, self.sat_coord, det_list.index(det), tstart=0., tstop=2., time=0.)
-
-            self.det_rsp[det] = rsp
-
-        for gp in self.grid:
-            ra, dec = gp.ra, gp.dec
-            for det in det_list:
-                gp.response[det] = OGIPResponse(
-                    glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.rsp')[0])
-                gp.response_generator[det] = np.empty(
-                    gp.dim, dtype=classmethod)
-                i = 0
-                for i in range(gp.dim[0]):
-                    j = 0
-                    for j in range(gp.dim[1]):
-                        gp.response_generator[det][i, j] = DispersionSpectrumLike.from_function(
-                            det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
-        os.chdir('../../')
-
-    def generate_DRM_spectrum(self, trigger="191017391", save=False, snr=20., e=1.):
+    def grid_generate_DRM_spectrum(self, trigger="191017391", save=False, snr=20., e=1.):
         '''
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
         through it so that we get a simulated physical photon count spectrum
@@ -318,7 +283,7 @@ class Simulator():
             for i in range(gp.dim[0]):
                 j = 0
                 for j in range(gp.dim[1]):
-                    iterate_signal_to_noise(i,j)
+                    self.iterate_signal_to_noise(gp,i,j)
                     for det in det_list:
                         gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
                         if save == True:
@@ -330,22 +295,24 @@ class Simulator():
 
         os.chdir('../../')
 
-    def iterate_signal_to_noise(self, i, j, snr=20.):
+    def iterate_signal_to_noise(self, gp, i, j, snr=20.):
 
-        e=1.
+        e=0.01
         bgk_K=20
 
-        while abs((calc_sig_max(bgk_K, i, j)/snr)-1) >e:
-            bgk_K=*snr/calc_sig_max(bgk_K, i, j)
+        while abs((self.calc_sig_max(bgk_K, gp, i, j)/snr)-1) > e:
+            print("Relation detector: "+str(abs(self.calc_sig_max(bgk_K, gp, i, j)/snr-1)))
+            bgk_K*=snr/self.calc_sig_max(bgk_K, gp, i, j)
+            print("New K: "+ str(bgk_K))
 
-        gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
 
-    def calc_sig_max(self, bgk_K, i, j):
+    def calc_sig_max(self, bgk_K, gp, i, j):
         siglist=[]
         for det in det_list:
-            gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(bgk_K), response=gp.response[det])}
+            gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(K=bgk_K), response=gp.response[det])}
             siglist.append(gp.response_generator[det][i,j]['generator'].significance)
-       return max(siglist)
+        print("Sigmax: " + str(max(siglist)))
+        return max(siglist)
 
     def load_DRM_spectrum(self):
         '''
@@ -382,81 +349,80 @@ class Simulator():
         os.chdir("../")
 
 
-class GridPoint():
+    class GridPoint():
 
-    '''
-    One point in the simulation grid.
-    '''
-
-    def __init__(self, name, coord, dim):
-        self.name = name
-        self.coord = coord
-        self.dim = dim
-        self.j2000 = None
-        self.response = dict()
-        self.response_generator = dict()
-
-    def generate_spectrum(self, i_max, i_min, c_max, c_min, K):
-        """
-        Compute sample cutoff powerlaw spectra
-        spectrum_matrix:
-
-
-        """
-        n = self.dim[0]
-        m = self.dim[1]
-
-        self.spectrum_matrix = np.empty(self.dim, dtype=classmethod)
-
-        self.value_matrix_string = np.empty(self.dim, dtype='U24')
-
-        self.value_matrix = np.empty(
-            self.dim, dtype=[('K', 'f8'), ('xc', 'f8'), ('index', 'f8')])
-        ''' Array with dimension self.dim
-        Each cell has structure [K,xc,index]
         '''
-        index = np.linspace(i_min, i_max, n)
-        cutoff = np.linspace(c_min, c_max, m)
-        i = 0
-        # source=PointSource()
-        for index_i in index:
-            j = 0
-            for cutoff_i in cutoff:
-                self.spectrum_matrix[i, j] = astromodels.Band_Calderone(F=K)
-                #self.spectrum_matrix[i, j] = astromodels.Cutoff_powerlaw(
-                #    K=K, index=index_i, xc=cutoff_i, piv=100.)
-                # self.value_matrix_string[i, j] = u"Index=" + \
-                #     unicode(round(index_i, 3))+u";Cutoff="+unicode(cutoff_i)
-                # self.value_matrix[i, j]["K"] = K
-                # self.value_matrix[i, j]["xc"] = cutoff_i
-                # self.value_matrix[i, j]["index"] = index_i
-                # j += 1
-            i += 1
-        print(self.value_matrix)
-
-    def add_j2000(self, sat_coord, sat_quat, time=2.):
-        """
-        Calculate the corresponding Ra and Dec coordinates
-        for the already given coordinate in the Fermi-Frame
-
-        final_frame:
-        doesnt matter as gbm_frame.gbm_to_j2000 outputs only ICRS
-        """
-        x, y, z = sat_coord
-        q1, q2, q3, q4 = sat_quat
-
-        frame = GBMFrame(sc_pos_X=x, sc_pos_Y=y, sc_pos_Z=z, quaternion_1=q1, quaternion_2=q2, quaternion_3=q3, quaternion_4=q4,
-                         SCX=self.coord[0]*u.km, SCY=self.coord[1]*u.km, SCZ=self.coord[2]*u.km, representation='cartesian')
-        # Muessen die Punkte ins unendliche projiziert werden?
-        icrsdata = gbm_frame.gbm_to_j2000(frame, coord.ICRS)
-        self.j2000 = icrsdata
-        self.ra = self.j2000.ra.degree
-        self.dec = self.j2000.dec.degree
-
-    def show(self):
+        One point in the simulation grid.
         '''
-        Returns coordinates in cartesian and ICRS and a table with the generated sample spectrum parameters
-        '''
+
+        def __init__(self, name, coord, dim):
+            self.name = name
+            self.coord = coord
+            self.dim = dim
+            self.j2000 = None
+            self.response = dict()
+            self.response_generator = dict()
+
+        def generate_am_spectrum(self, i_max, i_min, c_max, c_min, K):
+            """
+            Compute sample cutoff powerlaw spectra
+            spectrum_matrix:
+
+
+            """
+            n = self.dim[0]
+            m = self.dim[1]
+
+            self.spectrum_matrix = np.empty(self.dim, dtype=classmethod)
+
+            self.value_matrix_string = np.empty(self.dim, dtype='U24')
+
+            self.value_matrix = np.empty(
+                self.dim, dtype=[('K', 'f8'), ('xc', 'f8'), ('index', 'f8')])
+            ''' Array with dimension self.dim
+            Each cell has structure [K,xc,index]
+            '''
+            index = np.linspace(i_min, i_max, n)
+            cutoff = np.linspace(c_min, c_max, m)
+            i = 0
+            # source=PointSource()
+            for index_i in index:
+                j = 0
+                for cutoff_i in cutoff:
+                    self.spectrum_matrix[i, j] = astromodels.Band_Calderone(F=K)
+                    #self.spectrum_matrix[i, j] = astromodels.Cutoff_powerlaw(
+                    #    K=K, index=index_i, xc=cutoff_i, piv=100.)
+                    # self.value_matrix_string[i, j] = u"Index=" + \
+                    #     unicode(round(index_i, 3))+u";Cutoff="+unicode(cutoff_i)
+                    # self.value_matrix[i, j]["K"] = K
+                    # self.value_matrix[i, j]["xc"] = cutoff_i
+                    # self.value_matrix[i, j]["index"] = index_i
+                    # j += 1
+                i += 1
+            print(self.value_matrix)
+
+        def add_j2000(self, sat_coord, sat_quat, time=2.):
+            """
+            Calculate the corresponding Ra and Dec coordinates
+            for the already given coordinate in the Fermi-Frame
+
+            final_frame:
+            doesnt matter as gbm_frame.gbm_to_j2000 outputs only ICRS
+            """
+            x, y, z = sat_coord
+            q1, q2, q3, q4 = sat_quat
+
+            frame = GBMFrame(sc_pos_X=x, sc_pos_Y=y, sc_pos_Z=z, quaternion_1=q1, quaternion_2=q2, quaternion_3=q3, quaternion_4=q4,
+                            SCX=self.coord[0]*u.km, SCY=self.coord[1]*u.km, SCZ=self.coord[2]*u.km, representation='cartesian')
+            icrsdata = gbm_frame.gbm_to_j2000(frame, coord.ICRS)
+            self.j2000 = icrsdata
+            self.ra = self.j2000.ra.degree
+            self.dec = self.j2000.dec.degree
+
+        def show(self):
+            '''
+            Returns coordinates in cartesian and ICRS and a table with the generated sample spectrum parameters
+            '''
         print("GBM Cartesian Coordinates: " + str(self.coord))
         if self.j2000 == None:
             print(
