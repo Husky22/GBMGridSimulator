@@ -345,7 +345,7 @@ class Simulator():
         for det in det_list:
             gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(bgk_K), response=gp.response[det])}
             siglist.append(gp.response_generator[det][i,j]['generator'].significance)
-       return max(siglist)
+        return max(siglist)
 
     def load_DRM_spectrum(self):
         '''
