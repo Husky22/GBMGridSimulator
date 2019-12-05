@@ -1,11 +1,13 @@
 from Simulator import *
 import matplotlib
 from mpi4py import MPI
+import os
 from warnings import simplefilter
 simplefilter("ignore")
 comm=MPI.COMM_WORLD
 rank=comm.Get_rank()
-simulation=Simulator(2,[1,1],"/home/niklas/venv/GBMGridSimulator/rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit")
+envpath=os.environ.get('SIMULATOR')
+simulation=Simulator(2,[1,1],envpath+"/GBMGridSimulator/rawdata/191017391/glg_trigdat_all_bn191017391_v01.fit")
 simulation.setup(K=1E-6)
 simulation.generate_j2000()
 if rank==0:
