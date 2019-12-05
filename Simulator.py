@@ -18,6 +18,9 @@ import os
 from glob import glob
 import gbm_drm_gen as drm
 mpl.use('Agg')
+from mpi4py import MPI
+rank=MPI.COMM_WORLD.Get_rank()
+size=MPI.COMM_WORLD.Get_size()
 
 
 class Simulator():
@@ -282,8 +285,10 @@ class Simulator():
 
         '''
 
-        for gp in self.grid:
+        for i,gp in enumerate(self.grid):
+            if i&size!=rank: continue
             gp.generate_DRM_spectrum()
+            gp.save_pha(self.directory)
 
     def save_DRM_spectra(self):
 
@@ -533,8 +538,6 @@ class GridPoint():
             # result[ij_key]=jl[ij_key].fit()
             ba[ij_key]=BayesianAnalysis(model,data[ij_key])
             ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
-            from mpi4py import MPI
-            rank=MPI.COMM_WORLD.Get_rank()
             if rank==0:
                 ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
 
