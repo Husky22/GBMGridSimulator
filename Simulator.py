@@ -536,7 +536,7 @@ class GridPoint():
             from mpi4py import MPI
             rank=MPI.COMM_WORLD.Get_rank()
             if rank==0:
-                ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits")
+                ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
 
 
 
