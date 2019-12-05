@@ -283,7 +283,6 @@ class Simulator():
         for gp in self.grid:
             gp.generate_DRM_spectrum()
 
-
     def load_DRM_spectrum(self):
         '''
         Load saved PHA files from folder saved_pha in Simulation grid
@@ -322,6 +321,7 @@ class Simulator():
         for gp in self.grid:
             gp.refit_spectra(n_detectors=n_detectors)
 
+
 class GridPoint():
 
     '''
@@ -348,8 +348,6 @@ class GridPoint():
         m = self.dim[1]
 
         self.spectrum_matrix = np.empty(self.dim, dtype=classmethod)
-
-        self.value_matrix_string = np.empty(self.dim, dtype='U24')
 
         self.value_matrix = np.empty(
             self.dim, dtype=[('K', 'f8'), ('xc', 'f8'), ('index', 'f8')])
@@ -446,7 +444,7 @@ class GridPoint():
 
         e=0.1
         bgk_K=10
-        
+
         sigmax=self.calc_sig_max(bgk_K, i, j)
         sr=abs((sigmax/snr)-1)
 
@@ -518,7 +516,6 @@ class GridPoint():
             ba[ij_key]=BayesianAnalysis(model,data[ij_key])
             ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
             ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits")
-            
 
 
 
