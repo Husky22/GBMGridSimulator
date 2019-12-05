@@ -286,7 +286,8 @@ class Simulator():
         '''
 
         for i,gp in enumerate(self.grid):
-            if i&size!=rank: continue
+            if i%size!=rank: continue
+            print("GridPoint %d being done by processor %d" %(i,rank))
             gp.generate_DRM_spectrum()
             gp.save_pha(self.directory)
 
