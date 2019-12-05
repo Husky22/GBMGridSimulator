@@ -1,8 +1,10 @@
 from tabulate import tabulate
+import operator
 from IPython.display import HTML, display
-from gbmgeometry import PositionInterpolator, GBMFrame, gbm_frame
+from gbmgeometry import PositionInterpolator, GBMFrame, gbm_frame, GBM
 import astropy.coordinates as coord
 import astropy.units as u
+from scipy.stats import f as fisher_f
 from threeML.utils.OGIP.response import OGIPResponse
 from threeML import *
 import astromodels
@@ -10,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 import matplotlib as mpl
+import csv
 import math
 import os
 from glob import glob
@@ -55,7 +58,7 @@ class Simulator():
                 x = math.cos(phi)*r
                 z = math.sin(phi)*r
                 points.append(
-                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension))
+                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init))
             return np.array(points)
 
     def voronoi_sphere(self):
@@ -90,7 +93,7 @@ class Simulator():
             z = np.sin(p1)
 
             points.append(
-                GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension))
+                GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension,self.det_rsp,self.K_init))
 
         return np.array(points)
 
@@ -104,8 +107,7 @@ class Simulator():
         Nsteps: Number of simulation steps
         dt: stepsize
         '''
-        # get array of coordinates from GridPoint array
-        particles = self.get_coords_from_gridpoints()
+        # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
 
         steps = range(Nsteps)
 
@@ -148,7 +150,7 @@ class Simulator():
         for i in range(len(self.grid)):
             self.grid[i].update_coord(particles[i])
 
-    def setup(self, irange=[-1.5, -1], crange=[100, 400], K=50, algorithm='Fibonacci' ):
+    def setup(self,K, irange=[-1.5, -1], crange=[100, 400], algorithm='Fibonacci' ):
         '''
         Setup the GRB grid the spectrum matrices
         and the background function for your Simulation
@@ -156,20 +158,9 @@ class Simulator():
 
         self.indexrange = irange
         self.cutoffrange = crange
+        self.K_init = K
 
-        if algorithm == 'Fibonacci':
-            self.grid = self.fibonacci_sphere()
-            if self.j2000_generate == True:
-                self.generate_j2000()
-
-        elif algorithm == 'ModifiedFibonacci':
-            self.grid = self.voronoi_sphere()
-            if self.j2000_generate == True:
-                self.generate_j2000()
-
-        for point in self.grid:
-            point.generate_spectrum(i_min=float(min(irange)), i_max=float(max(irange)), c_min=float(min(crange)), c_max=float(max(crange)), K=K)
-
+        #Response Generator Generation
         trigger = "131229277"  # TODO: Set variable in setup or get from Trigfile
         self.det_rsp = dict()
         os.chdir('rawdata/'+trigger)
@@ -179,6 +170,16 @@ class Simulator():
 
             self.det_rsp[det] = rsp
         os.chdir("../../")
+
+        # Grid Generation
+        if algorithm == 'Fibonacci':
+            self.grid = self.fibonacci_sphere()
+            if self.j2000_generate == True:
+                self.generate_j2000()
+
+        for point in self.grid:
+            point.generate_astromodels_spectrum(i_min=float(min(irange)), i_max=float(max(irange)), c_min=float(min(crange)), c_max=float(max(crange)))
+
 
     def generate_j2000(self, time=0.):
         '''
@@ -194,6 +195,12 @@ class Simulator():
             self.j2000_generate = True
         except:
             print("Error! Is trigdat path correct?")
+
+    def print_earth_points(self):
+        gbm=GBM(self.sat_quat ,self.sat_coord*u.km)
+        res=gbm.get_earth_points()
+        print(len(res))
+        return res
 
     def grid_plot(self):
         '''
@@ -257,43 +264,8 @@ class Simulator():
                             det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
         os.chdir('../../')
 
-    def generate_spectrum_DRMgiven(self, trigger="191017391"):
-        '''
-        Test for Error finding in DRM generation
 
-
-        Generates for every GridPoint:
-        response
-        response_generator
-
-        '''
-
-        det_list = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5',
-                    'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
-        self.det_rsp = dict()
-        os.chdir('rawdata/'+trigger)
-        for det in det_list:
-            rsp = drm.drmgen_trig.DRMGenTrig(
-                self.sat_quat, self.sat_coord, det_list.index(det), tstart=0., tstop=2., time=0.)
-
-            self.det_rsp[det] = rsp
-
-        for gp in self.grid:
-            ra, dec = gp.ra, gp.dec
-            for det in det_list:
-                gp.response[det] = OGIPResponse(
-                    glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.rsp')[0])
-                gp.response_generator[det] = np.empty(
-                    gp.dim, dtype=classmethod)
-                i = 0
-                for i in range(gp.dim[0]):
-                    j = 0
-                    for j in range(gp.dim[1]):
-                        gp.response_generator[det][i, j] = DispersionSpectrumLike.from_function(
-                            det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
-        os.chdir('../../')
-
-    def generate_DRM_spectrum(self, trigger="191017391", save=False, snr=20., e=1.):
+    def grid_generate_DRM_spectrum(self, trigger="191017391", save=False, snr=20., e=1.):
         '''
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
         through it so that we get a simulated physical photon count spectrum
@@ -309,43 +281,8 @@ class Simulator():
         '''
 
         for gp in self.grid:
-            ra, dec = gp.ra, gp.dec
-            i = 0
-            for det in det_list:
-                gp.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
-                gp.response_generator[det] = np.empty(
-                    gp.dim, dtype=dict)
-            for i in range(gp.dim[0]):
-                j = 0
-                for j in range(gp.dim[1]):
-                    iterate_signal_to_noise(i,j)
-                    for det in det_list:
-                        gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
-                        if save == True:
-                            dirpath = "saved_pha/"+gp.name
-                            if not os.path.exists(dirpath):
-                                os.makedirs(dirpath)
-                            gp.response_generator[det][i, j]["generator"].write_pha(
-                                dirpath+"/"+det+"_"+str(i)+"_"+str(j), overwrite=True)
+            gp.generate_DRM_spectrum()
 
-        os.chdir('../../')
-
-    def iterate_signal_to_noise(self, i, j, snr=20.):
-
-        e=1.
-        bgk_K=20
-
-        while abs((calc_sig_max(bgk_K, i, j)/snr)-1) >e:
-            bgk_K*=snr/calc_sig_max(bgk_K, i, j)
-
-        gp.response_generator[det][i,j].update({"significance":gp.response_generator[det][i, j]["generator"].significance})
-
-    def calc_sig_max(self, bgk_K, i, j):
-        siglist=[]
-        for det in det_list:
-            gp.response_generator[det][i, j] = {"generator" : DispersionSpectrumLike.from_function(det, source_function=gp.spectrum_matrix[i, j], background_function=Powerlaw(bgk_K), response=gp.response[det])}
-            siglist.append(gp.response_generator[det][i,j]['generator'].significance)
-        return max(siglist)
 
     def load_DRM_spectrum(self):
         '''
@@ -381,6 +318,9 @@ class Simulator():
                             gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)}
         os.chdir("../")
 
+    def run(self,n_detectors=4):
+        for gp in self.grid:
+            gp.refit_spectra(n_detectors=n_detectors)
 
 class GridPoint():
 
@@ -388,19 +328,20 @@ class GridPoint():
     One point in the simulation grid.
     '''
 
-    def __init__(self, name, coord, dim):
+    def __init__(self, name, coord, dim, det_rsp, K_init):
         self.name = name
         self.coord = coord
         self.dim = dim
         self.j2000 = None
         self.response = dict()
         self.response_generator = dict()
+        self.det_rsp = det_rsp
+        self.K_init=K_init
 
-    def generate_spectrum(self, i_max, i_min, c_max, c_min, K):
+    def generate_astromodels_spectrum(self, i_max, i_min, c_max, c_min):
         """
         Compute sample cutoff powerlaw spectra
         spectrum_matrix:
-
 
         """
         n = self.dim[0]
@@ -415,6 +356,7 @@ class GridPoint():
         ''' Array with dimension self.dim
         Each cell has structure [K,xc,index]
         '''
+        self.K_matrix=np.full(self.dim,self.K_init)
         index = np.linspace(i_min, i_max, n)
         cutoff = np.linspace(c_min, c_max, m)
         i = 0
@@ -422,7 +364,7 @@ class GridPoint():
         for index_i in index:
             j = 0
             for cutoff_i in cutoff:
-                self.spectrum_matrix[i, j] = astromodels.Band_Calderone(F=K)
+                self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_init,opt=0)
                 #self.spectrum_matrix[i, j] = astromodels.Cutoff_powerlaw(
                 #    K=K, index=index_i, xc=cutoff_i, piv=100.)
                 # self.value_matrix_string[i, j] = u"Index=" + \
@@ -430,9 +372,8 @@ class GridPoint():
                 # self.value_matrix[i, j]["K"] = K
                 # self.value_matrix[i, j]["xc"] = cutoff_i
                 # self.value_matrix[i, j]["index"] = index_i
-                # j += 1
+                j += 1
             i += 1
-        print(self.value_matrix)
 
     def add_j2000(self, sat_coord, sat_quat, time=2.):
         """
@@ -446,8 +387,7 @@ class GridPoint():
         q1, q2, q3, q4 = sat_quat
 
         frame = GBMFrame(sc_pos_X=x, sc_pos_Y=y, sc_pos_Z=z, quaternion_1=q1, quaternion_2=q2, quaternion_3=q3, quaternion_4=q4,
-                         SCX=self.coord[0]*u.km, SCY=self.coord[1]*u.km, SCZ=self.coord[2]*u.km, representation='cartesian')
-        # Muessen die Punkte ins unendliche projiziert werden?
+                        SCX=self.coord[0]*u.km, SCY=self.coord[1]*u.km, SCZ=self.coord[2]*u.km, representation='cartesian')
         icrsdata = gbm_frame.gbm_to_j2000(frame, coord.ICRS)
         self.j2000 = icrsdata
         self.ra = self.j2000.ra.degree
@@ -464,8 +404,122 @@ class GridPoint():
         else:
             print("RA: " + str(self.j2000.ra) +
                   " \nDEC: " + str(self.j2000.dec))
-        display(HTML(tabulate(self.value_matrix_string, tablefmt='html',
-                              headers=range(self.dim[1]), showindex='always')))
-
+            display(HTML(tabulate(self.value_matrix_string, tablefmt='html',
+                                  headers=range(self.dim[1]), showindex='always')))
+            
     def update_coord(self, new_coord):
+        '''
+        Update the coordinate of the GridPoint
+
+        '''
         self.coord = new_coord
+
+    def generate_DRM_spectrum(self, ra=None, dec=None):
+        '''
+        Generate a DispersionSpectrum with a response matrix
+
+        Generates:
+        response
+        response_generator
+        '''
+        if ra==None and dec == None:
+            ra = self.ra
+            dec = self.dec
+
+        for det in det_list:
+            self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
+            self.response_generator[det] = np.empty(
+                self.dim, dtype=classmethod)
+        for i in range(self.dim[0]):
+            for j in range(self.dim[1]):
+                res = self.iterate_signal_to_noise(i,j)
+                if res=="ConvergenceError":
+                    with open("ConvergenceError.csv","a") as f:
+                        writer=csv.writer(f)
+                        writer.writerow([self.ra,self.dec])
+
+                #for det in det_list:
+                    #self.response_generator[det][i,j].update({"significance":self.response_generator[det][i, j]["generator"].significance})
+
+
+    def iterate_signal_to_noise(self, i, j, snr=20.):
+
+        e=0.1
+        bgk_K=10
+        
+        sigmax=self.calc_sig_max(bgk_K, i, j)
+        sr=abs((sigmax/snr)-1)
+
+        while sr > e:
+            K_temp=self.K_matrix[i,j]*snr/sigmax
+            # for det in det_list:
+            #     self.response_generator[det][i,j]['generator'].view_count_spectrum().savefig("result_"+str(det)+"_"+str(round(bgk_K,5))+"_"+str(self.K_matrix[i,j])+".png")
+            if K_temp>1000:
+                return "ConvergenceError"
+            elif K_temp<1E-30:
+                self.K_matrix[i,j]=np.random.randint(1,20)*1E-6
+            else:
+                self.K_matrix[i,j]=K_temp
+
+            self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=200,opt=0)
+            sigmax=self.calc_sig_max(bgk_K, i, j)
+            sr=abs((sigmax/snr)-1)
+            print(sigmax)
+            print("New K["+str(i)+","+str(j)+"]: "+ str(self.K_matrix[i,j]))
+            print("\n==============\n")
+
+
+    def calc_sig_max(self, bgk_K, i, j):
+        siglist=[]
+        print(self.K_matrix)
+        for det in det_list:
+            self.response_generator[det][i, j] = DispersionSpectrumLike.from_function(det+str(i)+str(j)+self.name, source_function=self.spectrum_matrix[i, j], background_function=Powerlaw(K=bgk_K,piv=100), response=self.response[det])
+            siglist.append(self.response_generator[det][i,j].significance)
+        return max(siglist)
+
+    def random_fisher_samples(self, ra, dec, fisher_values):
+        #create list with coordinates from fisher bir distribution
+        return 0
+
+    def refit_spectra(self, n_detectors=4,ra=None, dec=None):
+        if ra==None and dec == None:
+            ra = self.ra
+            dec = self.dec
+        # spectrum=Cutoff_powerlaw()
+        # spectrum.K.prior=Log_uniform_prior(lower_bound=1E-3,upper_bound=1000)
+        # spectrum.index.set_uninformative_prior(Uniform_prior)
+        # spectrum.xc.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=10000)
+        spectrum=Band_Calderone(opt=0)
+        spectrum.F.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
+        spectrum.alpha.set_uninformative_prior(Uniform_prior)
+        spectrum.beta.fix=True
+        spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+
+        ps=PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
+        full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
+        selected_sig = {}
+        model=Model(ps)
+        result=dict()
+        jl={}
+        ba={}
+        data=dict()
+        for ij_key in full_sig:
+            i=int(ij_key[0])
+            j=int(ij_key[1])
+            ls=[]
+            lsval=[]
+            for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
+                ls.append(tuple[0])
+            selected_sig[ij_key]=ls
+            #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+            data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
+            # jl[ij_key]=JointLikelihood(model,data[ij_key])
+            # result[ij_key]=jl[ij_key].fit()
+            ba[ij_key]=BayesianAnalysis(model,data[ij_key])
+            ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
+            ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits")
+            
+
+
+
+
