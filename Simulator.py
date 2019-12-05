@@ -17,6 +17,7 @@ import math
 import os
 from glob import glob
 import gbm_drm_gen as drm
+from sphere.distribution import fb83
 mpl.use('Agg')
 from mpi4py import MPI
 rank=MPI.COMM_WORLD.Get_rank()
@@ -333,6 +334,17 @@ class Simulator():
         for gp in self.grid:
             gp.refit_spectra(n_detectors=n_detectors)
 
+    def run_fisher(self,n_detectors, n_samples, k):
+        for i,gp in enumerate(self.grid):
+            if i%size!=rank: continue
+            print("calc fisher")
+            gp.create_fisher_samples(k, n_samples)
+            print(gp.fisher_samples_radec)
+
+        MPI.COMM_WORLD.Barrier()
+        for gp in self.grid:
+            gp.refit_spectra(n_detectors=n_detectors,use_fisher_samples=True)
+
 
 class GridPoint():
 
@@ -385,7 +397,7 @@ class GridPoint():
                 j += 1
             i += 1
 
-    def add_j2000(self, sat_coord, sat_quat, time=2.):
+    def add_j2000(self, sat_coord, sat_quat, time=0.):
         """
         Calculate the corresponding Ra and Dec coordinates
         for the already given coordinate in the Fermi-Frame
@@ -393,6 +405,8 @@ class GridPoint():
         final_frame:
         doesnt matter as gbm_frame.gbm_to_j2000 outputs only ICRS
         """
+        self.sat_coord=sat_coord
+        self.sat_quat=sat_quat
         x, y, z = sat_coord
         q1, q2, q3, q4 = sat_quat
 
@@ -402,6 +416,14 @@ class GridPoint():
         self.j2000 = icrsdata
         self.ra = self.j2000.ra.degree
         self.dec = self.j2000.dec.degree
+
+    def calc_j2000(self,coordinates):
+        x, y, z = self.sat_coord
+        q1, q2, q3, q4 = self.sat_quat
+
+        frame = GBMFrame(sc_pos_X=x, sc_pos_Y=y, sc_pos_Z=z, quaternion_1=q1, quaternion_2=q2, quaternion_3=q3, quaternion_4=q4,
+                        SCX=coordinates[0]*u.km, SCY=coordinates[1]*u.km, SCZ=coordinates[2]*u.km, representation='cartesian')
+        return gbm_frame.gbm_to_j2000(frame, coord.ICRS)
 
     def show(self):
         '''
@@ -436,7 +458,7 @@ class GridPoint():
         '''
         self.coord = new_coord
 
-    def generate_DRM_spectrum(self, ra=None, dec=None):
+    def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False):
         '''
         Generate a DispersionSpectrum with a response matrix
 
@@ -447,18 +469,25 @@ class GridPoint():
         if ra==None and dec == None:
             ra = self.ra
             dec = self.dec
+        if not only_response:
 
-        for det in det_list:
-            self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
-            self.response_generator[det] = np.empty(
-                self.dim, dtype=classmethod)
-        for i in range(self.dim[0]):
-            for j in range(self.dim[1]):
-                res = self.iterate_signal_to_noise(i,j)
-                if res=="ConvergenceError":
-                    with open("ConvergenceError.csv","a") as f:
-                        writer=csv.writer(f)
-                        writer.writerow([self.ra,self.dec])
+            for det in det_list:
+                self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
+                self.response_generator[det] = np.empty(
+                    self.dim, dtype=classmethod)
+            for i in range(self.dim[0]):
+                for j in range(self.dim[1]):
+                    res = self.iterate_signal_to_noise(i,j)
+                    if res=="ConvergenceError":
+                        with open("ConvergenceError.csv","a") as f:
+                            writer=csv.writer(f)
+                            writer.writerow([self.ra,self.dec])
+        else:
+            response_list={}
+            for det in det_list:
+                response_list[det] = self.det_rsp[det].to_3ML_response(ra, dec)
+            return response_list
+
 
                 #for det in det_list:
                     #self.response_generator[det][i,j].update({"significance":self.response_generator[det][i, j]["generator"].significance})
@@ -499,48 +528,92 @@ class GridPoint():
             siglist.append(self.response_generator[det][i,j].significance)
         return max(siglist)
 
-    def random_fisher_samples(self, ra, dec, fisher_values):
+    def create_fisher_samples(self, k, n_samples):
         #create list with coordinates from fisher bir distribution
-        return 0
+        self.fisher_samples=fb83(k*np.array(self.coord),[0,0,0]).rvs(n_samples)
+        self.fisher_samples_radec=self.calc_j2000(self.fisher_samples.T)
 
-    def refit_spectra(self, n_detectors=4,ra=None, dec=None):
+    def refit_spectra(self, n_detectors=4,ra=None, dec=None, use_fisher_samples=False):
         if ra==None and dec == None:
             ra = self.ra
             dec = self.dec
-        # spectrum=Cutoff_powerlaw()
-        # spectrum.K.prior=Log_uniform_prior(lower_bound=1E-3,upper_bound=1000)
-        # spectrum.index.set_uninformative_prior(Uniform_prior)
-        # spectrum.xc.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=10000)
-        spectrum=Band_Calderone(opt=0)
-        spectrum.F.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
-        spectrum.alpha.set_uninformative_prior(Uniform_prior)
-        spectrum.beta.fix=True
-        spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
 
-        ps=PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
-        full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
-        selected_sig = {}
-        model=Model(ps)
-        result=dict()
-        jl={}
-        ba={}
-        data=dict()
-        for ij_key in full_sig:
-            i=int(ij_key[0])
-            j=int(ij_key[1])
-            ls=[]
-            lsval=[]
-            for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
-                ls.append(tuple[0])
-            selected_sig[ij_key]=ls
-            #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
-            data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
-            # jl[ij_key]=JointLikelihood(model,data[ij_key])
-            # result[ij_key]=jl[ij_key].fit()
-            ba[ij_key]=BayesianAnalysis(model,data[ij_key])
-            ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
-            if rank==0:
-                ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+        if use_fisher_samples:
+
+            for n,sample in enumerate(self.fisher_samples_radec):
+
+                new_response=self.generate_DRM_spectrum(sample.ra,sample.dec,only_response=True)
+
+                # for (i,j),value in np.ndenumerate(self.value_matrix):
+                #     for det in det_list:
+                #         self.response_generator[det][i,j].response=new_response[det]
+
+                spectrum=Band_Calderone(opt=0)
+                spectrum.F.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
+                spectrum.alpha.set_uninformative_prior(Uniform_prior)
+                spectrum.beta.fix=True
+                spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+
+                ps=PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
+                full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
+                selected_sig = {}
+                model=Model(ps)
+                result=dict()
+                jl={}
+                ba={}
+                data=dict()
+                for ij_key in full_sig:
+                    i=int(ij_key[0])
+                    j=int(ij_key[1])
+                    ls=[]
+                    lsval=[]
+                    for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
+                        ls.append(tuple[0])
+                    selected_sig[ij_key]=ls
+                    #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+                    data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0.,self.det_rsp[det],free_position=False) for det in selected_sig[ij_key]])
+                    # jl[ij_key]=JointLikelihood(model,data[ij_key])
+                    # result[ij_key]=jl[ij_key].fit()
+                    ba[ij_key]=BayesianAnalysis(model,data[ij_key])
+                    ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
+                    if rank==0:
+                        ba[ij_key].results.write_to('results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+
+        else:
+            # spectrum=Cutoff_powerlaw()
+                # spectrum.K.prior=Log_uniform_prior(lower_bound=1E-3,upper_bound=1000)
+                # spectrum.index.set_uninformative_prior(Uniform_prior)
+                # spectrum.xc.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=10000)
+            spectrum=Band_Calderone(opt=0)
+            spectrum.F.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
+            spectrum.alpha.set_uninformative_prior(Uniform_prior)
+            spectrum.beta.fix=True
+            spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+
+            ps=PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
+            full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
+            selected_sig = {}
+            model=Model(ps)
+            result=dict()
+            jl={}
+            ba={}
+            data=dict()
+            for ij_key in full_sig:
+                i=int(ij_key[0])
+                j=int(ij_key[1])
+                ls=[]
+                lsval=[]
+                for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
+                    ls.append(tuple[0])
+                    selected_sig[ij_key]=ls
+                    #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+                data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
+                # jl[ij_key]=JointLikelihood(model,data[ij_key])
+                # result[ij_key]=jl[ij_key].fit()
+                ba[ij_key]=BayesianAnalysis(model,data[ij_key])
+                ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
+                if rank==0:
+                    ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
 
 
 
