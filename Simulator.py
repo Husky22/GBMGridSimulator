@@ -283,7 +283,12 @@ class Simulator():
         for gp in self.grid:
             gp.generate_DRM_spectrum()
 
-    def load_DRM_spectrum(self):
+    def save_DRM_spectra(self):
+
+        for gp in self.grid:
+            gp.save_pha()
+
+    def load_DRM_spectra(self):
         '''
         Load saved PHA files from folder saved_pha in Simulation grid
         '''
@@ -313,8 +318,7 @@ class Simulator():
                         file_name = det+"_"+str(i)+"_"+str(j)
                         file_path = gp.name + "/" + file_name
 
-                        gp.response_generator[det][i, j] = {'generator' : OGIPLike(
-                            gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)}
+                        gp.response_generator[det][i, j] = OGIPLike(gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)
         os.chdir("../")
 
     def run(self,n_detectors=4):
@@ -404,7 +408,18 @@ class GridPoint():
                   " \nDEC: " + str(self.j2000.dec))
             display(HTML(tabulate(self.value_matrix_string, tablefmt='html',
                                   headers=range(self.dim[1]), showindex='always')))
-            
+
+    def save_pha(self):
+        dirpath = "saved_pha/"+gp.name
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+            for i in range(self.dim[0]):
+                for j in range(self.dim[1]):
+                    self.response_generator[det][i, j].write_pha(
+                        dirpath+"/"+det+"_"+str(i)+"_"+str(j), overwrite=True)
+
+        os.chdir('../../')
+
     def update_coord(self, new_coord):
         '''
         Update the coordinate of the GridPoint
