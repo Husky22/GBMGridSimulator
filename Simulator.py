@@ -30,14 +30,18 @@ class Simulator():
     det_list = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5',
                 'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
 
-    def __init__(self, source_number, spectrum_matrix_dimensions, trigfile):
+    def __init__(self, source_number, spectrum_matrix_dimensions, directory, trigger = "131229277"):
         self.N = source_number
         self.spectrum_dimension = spectrum_matrix_dimensions
         self.grid = None
         self.j2000_generate = False
         self.indexrange = None
         self.cutoffrange = None
-        self.trigfile = trigfile
+        self.directory= directory
+        self.trigger = trigger
+        self.trigger_folder= self.directory +"/rawdata/"+trigger
+        print(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')
+        self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')[0]
 
     def fibonacci_sphere(self, randomize=True):
         """
@@ -161,15 +165,14 @@ class Simulator():
         self.K_init = K
 
         #Response Generator Generation
-        trigger = "131229277"  # TODO: Set variable in setup or get from Trigfile
         self.det_rsp = dict()
-        os.chdir('rawdata/'+trigger)
+        os.chdir(self.trigger_folder)
         print(os.getcwd())
         for det in det_list:
-            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+trigger+'_v0*.fit.gz')[0], trigdat=glob('glg_trigdat_all_bn'+trigger+'_v0*.fit')[0], mat_type=2, cspecfile=glob('glg_cspec_'+det+'_bn'+trigger+'_v0*.pha')[0])
+            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0], trigdat=self.trigfile, mat_type=2, cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0])
 
             self.det_rsp[det] = rsp
-        os.chdir("../../")
+        os.chdir(self.directory)
 
         # Grid Generation
         if algorithm == 'Fibonacci':
@@ -199,7 +202,6 @@ class Simulator():
     def print_earth_points(self):
         gbm=GBM(self.sat_quat ,self.sat_coord*u.km)
         res=gbm.get_earth_points()
-        print(len(res))
         return res
 
     def grid_plot(self):
@@ -243,7 +245,7 @@ class Simulator():
         det_list = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5',
                     'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
         self.det_rsp = dict()
-        os.chdir('rawdata/'+trigger)
+        os.chdir(self.trigger_folder)
         for det in det_list:
             rsp = drm.drmgen_trig.DRMGenTrig(
                 self.sat_quat, self.sat_coord, det_list.index(det), tstart=0., tstop=2., time=0.)
@@ -262,10 +264,10 @@ class Simulator():
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.response_generator[det][i, j] = DispersionSpectrumLike.from_function(
                             det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
-        os.chdir('../../')
+        os.chdir(self.directory)
 
 
-    def grid_generate_DRM_spectrum(self, trigger="191017391", save=False, snr=20., e=1.):
+    def grid_generate_DRM_spectrum(self, snr=20., e=1.):
         '''
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
         through it so that we get a simulated physical photon count spectrum
@@ -286,7 +288,7 @@ class Simulator():
     def save_DRM_spectra(self):
 
         for gp in self.grid:
-            gp.save_pha()
+            gp.save_pha(self.directory)
 
     def load_DRM_spectra(self):
         '''
@@ -295,7 +297,7 @@ class Simulator():
         i_list = []
         j_list = []
         dirs = 0
-        for _, dirnames, filenames in os.walk("saved_pha/"):
+        for _, dirnames, filenames in os.walk(self.directory+"/saved_pha/"):
             for filename in filenames:
                 i_list.append(filename.split("_")[1])
                 j_list.append(filename.split("_")[2][0])
@@ -305,7 +307,7 @@ class Simulator():
         assert int(max(i_list)) == self.spectrum_dimension[0]-1 and int(
             max(j_list)) == self.spectrum_dimension[1]-1, "Dimensions do not coincide"
 
-        os.chdir("saved_pha/")
+        os.chdir(self.directory+"/saved_pha/")
         for gp in self.grid:
 
             for det in det_list:
@@ -319,7 +321,7 @@ class Simulator():
                         file_path = gp.name + "/" + file_name
 
                         gp.response_generator[det][i, j] = OGIPLike(gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)
-        os.chdir("../")
+        os.chdir(self.directory)
 
     def run(self,n_detectors=4):
         for gp in self.grid:
@@ -409,16 +411,17 @@ class GridPoint():
             display(HTML(tabulate(self.value_matrix_string, tablefmt='html',
                                   headers=range(self.dim[1]), showindex='always')))
 
-    def save_pha(self):
-        dirpath = "saved_pha/"+gp.name
+    def save_pha(self, directory):
+        dirpath = directory+"/saved_pha/"+self.name
         if not os.path.exists(dirpath):
             os.makedirs(dirpath)
+        for det in det_list:
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
                     self.response_generator[det][i, j].write_pha(
                         dirpath+"/"+det+"_"+str(i)+"_"+str(j), overwrite=True)
 
-        os.chdir('../../')
+        os.chdir(directory)
 
     def update_coord(self, new_coord):
         '''
