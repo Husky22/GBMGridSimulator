@@ -335,14 +335,8 @@ class Simulator():
             gp.refit_spectra(n_detectors=n_detectors)
 
     def run_fisher(self,n_detectors, n_samples, k):
-        for i,gp in enumerate(self.grid):
-            if i%size!=rank: continue
-            print("calc fisher")
-            gp.create_fisher_samples(k, n_samples)
-            print(gp.fisher_samples_radec)
-
-        MPI.COMM_WORLD.Barrier()
         for gp in self.grid:
+            gp.create_fisher_samples(k, n_samples)
             gp.refit_spectra(n_detectors=n_detectors,use_fisher_samples=True)
 
 
@@ -553,8 +547,9 @@ class GridPoint():
                 spectrum.alpha.set_uninformative_prior(Uniform_prior)
                 spectrum.beta.fix=True
                 spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+                print(sample.ra)
 
-                ps=PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
+                ps=PointSource(self.name,ra=float(sample.ra.degree),dec=float(sample.dec.degree), spectral_shape=spectrum)
                 full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
                 selected_sig = {}
                 model=Model(ps)
