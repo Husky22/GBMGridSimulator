@@ -18,6 +18,7 @@ import os
 from glob import glob
 import gbm_drm_gen as drm
 from sphere.distribution import fb83
+import h5py
 mpl.use('Agg')
 from mpi4py import MPI
 rank=MPI.COMM_WORLD.Get_rank()
@@ -34,7 +35,8 @@ class Simulator():
     det_list = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5',
                 'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
 
-    def __init__(self, source_number, spectrum_matrix_dimensions, directory, trigger = "131229277"):
+    def __init__(self, name, source_number, spectrum_matrix_dimensions, directory, trigger = "131229277"):
+        self.simulation_name=name
         self.N = source_number
         self.spectrum_dimension = spectrum_matrix_dimensions
         self.grid = None
@@ -66,7 +68,7 @@ class Simulator():
                 x = math.cos(phi)*r
                 z = math.sin(phi)*r
                 points.append(
-                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init))
+                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init,self.simulation_file))
             return np.array(points)
 
     def voronoi_sphere(self):
@@ -116,6 +118,11 @@ class Simulator():
         dt: stepsize
         '''
         # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
+        particles = self.get_coords_from_gridpoints()
+        if len(particles)==1:
+            print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
+            return 0
+            
 
         steps = range(Nsteps)
 
@@ -163,6 +170,11 @@ class Simulator():
         Setup the GRB grid the spectrum matrices
         and the background function for your Simulation
         '''
+        if rank==0:
+            self.simulation_file_path=self.directory+"/SimulationFiles/"+self.simulation_name+".hdf5"
+            self.simulation_file=h5py.File(self.simulation_file_path,"w")
+            f=self.simulation_file
+            gridh5=f.create_group("grid")
 
         self.indexrange = irange
         self.cutoffrange = crange
@@ -181,11 +193,14 @@ class Simulator():
         # Grid Generation
         if algorithm == 'Fibonacci':
             self.grid = self.fibonacci_sphere()
+            self.generate_j2000()
+            #TODO Correct the True Variable. Is it still useful? 
             if self.j2000_generate == True:
                 self.generate_j2000()
 
         for point in self.grid:
             point.generate_astromodels_spectrum(i_min=float(min(irange)), i_max=float(max(irange)), c_min=float(min(crange)), c_max=float(max(crange)))
+
 
 
     def generate_j2000(self, time=0.):
@@ -199,6 +214,10 @@ class Simulator():
         try:
             for gp in self.grid:
                 gp.add_j2000(self.sat_coord, self.sat_quat)
+                if not self.j2000_generate :
+                    self.simulation_file["grid"].create_group(gp.name)
+                self.simulation_file["grid"][gp.name].attrs["True Position"]=[gp.ra,gp.dec]
+
             self.j2000_generate = True
         except:
             print("Error! Is trigdat path correct?")
@@ -290,12 +309,12 @@ class Simulator():
             if i%size!=rank: continue
             print("GridPoint %d being done by processor %d" %(i,rank))
             gp.generate_DRM_spectrum()
-            gp.save_pha(self.directory)
+            gp.save_pha(self.directory,overwrite=True)
 
-    def save_DRM_spectra(self):
+    def save_DRM_spectra(self,overwrite=True):
 
         for gp in self.grid:
-            gp.save_pha(self.directory)
+            gp.save_pha(self.directory,overwrite)
 
     def load_DRM_spectra(self):
         '''
@@ -304,7 +323,7 @@ class Simulator():
         i_list = []
         j_list = []
         dirs = 0
-        for _, dirnames, filenames in os.walk(self.directory+"/saved_pha/"):
+        for _, dirnames, filenames in os.walk(self.directory+"/SimulationFiles/PHAFiles/"):
             for filename in filenames:
                 i_list.append(filename.split("_")[1])
                 j_list.append(filename.split("_")[2][0])
@@ -314,7 +333,7 @@ class Simulator():
         assert int(max(i_list)) == self.spectrum_dimension[0]-1 and int(
             max(j_list)) == self.spectrum_dimension[1]-1, "Dimensions do not coincide"
 
-        os.chdir(self.directory+"/saved_pha/")
+        os.chdir(self.directory+"/SimulationFiles/PHAFiles/")
         for gp in self.grid:
 
             for det in det_list:
@@ -331,30 +350,47 @@ class Simulator():
         os.chdir(self.directory)
 
     def run(self,n_detectors=4):
+        '''
+        n_detectors: number of strongest detectors to use for fitting
+        '''
+
         for gp in self.grid:
             gp.refit_spectra(n_detectors=n_detectors)
 
     def run_fisher(self,n_detectors, n_samples, k):
+        '''
+        n_detectors: number of strongest detectors to use for fitting
+        n_samples: Number of fisher samples
+        k: Fisher concentration constant
+        '''
         for gp in self.grid:
+            self.simulation_file["grid/"+gp.name].create_group("fisher")
             gp.create_fisher_samples(k, n_samples)
-            gp.refit_spectra(n_detectors=n_detectors,use_fisher_samples=True)
+            gp.refit_spectra(self.directory,n_detectors=n_detectors,use_fisher_samples=True)
 
 
 class GridPoint():
 
     '''
     One point in the simulation grid.
+
+    Containing:
+    Astromodel Spectra
+    Position Information
+    DispersionSpectrumLike
+    Fisher Distribution
     '''
 
-    def __init__(self, name, coord, dim, det_rsp, K_init):
-        self.name = name
-        self.coord = coord
-        self.dim = dim
-        self.j2000 = None
-        self.response = dict()
-        self.response_generator = dict()
-        self.det_rsp = det_rsp
-        self.K_init=K_init
+    def __init__(self, name, coord, dim, det_rsp, K_init, simulation_file):
+        self.name = name # string "gp0"
+        self.coord = coord # array [x,y,z] Coordinates
+        self.dim = dim # Spectrum Matrix Dimensions tuple (2,2)
+        self.j2000 = None # SkyCoord Object
+        self.response = dict() # InstrumentResponse
+        self.response_generator = dict() # DispersionSpectrumLike
+        self.det_rsp = det_rsp # DRMGen
+        self.K_init=K_init # float
+        self.simulation_file = simulation_file # h5py.File
 
     def generate_astromodels_spectrum(self, i_max, i_min, c_max, c_min):
         """
@@ -368,28 +404,32 @@ class GridPoint():
         self.spectrum_matrix = np.empty(self.dim, dtype=classmethod)
 
         self.value_matrix = np.empty(
-            self.dim, dtype=[('K', 'f8'), ('xc', 'f8'), ('index', 'f8')])
-        ''' Array with dimension self.dim
-        Each cell has structure [K,xc,index]
+            self.dim, dtype=[('F', 'f8'), ('xp', 'f8'), ('alpha', 'f8')])
+        '''
+        Array with dimension self.dim
+        Contains Information about the spectral parameters of each spectrum from spectrum_matrix
+        Each cell has structure [F,xp,alpha]
         '''
         self.K_matrix=np.full(self.dim,self.K_init)
         index = np.linspace(i_min, i_max, n)
         cutoff = np.linspace(c_min, c_max, m)
+        if rank==0:
+            f=self.simulation_file['grid']
         i = 0
         # source=PointSource()
         for index_i in index:
             j = 0
             for cutoff_i in cutoff:
-                self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_init,opt=0)
-                #self.spectrum_matrix[i, j] = astromodels.Cutoff_powerlaw(
-                #    K=K, index=index_i, xc=cutoff_i, piv=100.)
-                # self.value_matrix_string[i, j] = u"Index=" + \
-                #     unicode(round(index_i, 3))+u";Cutoff="+unicode(cutoff_i)
-                # self.value_matrix[i, j]["K"] = K
-                # self.value_matrix[i, j]["xc"] = cutoff_i
-                # self.value_matrix[i, j]["index"] = index_i
+                self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_init,alpha=index_i,xp=cutoff_i,opt=0)
+                self.value_matrix[i, j]["F"] = self.K_init
+                self.value_matrix[i, j]["xp"] = cutoff_i
+                self.value_matrix[i, j]["alpha"] = index_i
                 j += 1
             i += 1
+
+        if rank==0:
+            f[self.name].create_dataset("Spectrum Parameters",self.dim,data=self.value_matrix)
+            f[self.name].attrs["Spectrum Type"]="Band_Calderone"
 
     def add_j2000(self, sat_coord, sat_quat, time=0.):
         """
@@ -433,10 +473,17 @@ class GridPoint():
             display(HTML(tabulate(self.value_matrix_string, tablefmt='html',
                                   headers=range(self.dim[1]), showindex='always')))
 
-    def save_pha(self, directory):
-        dirpath = directory+"/saved_pha/"+self.name
+    def save_pha(self, directory, overwrite):
+        dirpath = directory+"/SimulationFiles/PHAFiles/"+self.name
         if not os.path.exists(dirpath):
             os.makedirs(dirpath)
+        elif overwrite:
+            files=glob(dirpath+"/*")
+            for f in files:
+                os.remove(f)
+        else:
+            print("Path already exists and overwrite option is false")
+
         for det in det_list:
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
@@ -451,10 +498,13 @@ class GridPoint():
 
         '''
         self.coord = new_coord
+        self.simulation_file["grid/"+self.name].attrs["True Position"]=new_coord
 
-    def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False):
+    def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False,e=0.1):
         '''
         Generate a DispersionSpectrum with a response matrix
+        only_response = True:
+        Generate only a 3ML InstrumentResponse for given RA and DEC
 
         Generates:
         response
@@ -471,11 +521,12 @@ class GridPoint():
                     self.dim, dtype=classmethod)
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
-                    res = self.iterate_signal_to_noise(i,j)
+                    res = self.iterate_signal_to_noise(i,j,e=e)
                     if res=="ConvergenceError":
                         with open("ConvergenceError.csv","a") as f:
                             writer=csv.writer(f)
                             writer.writerow([self.ra,self.dec])
+            self.simulation_file['grid/'+self.name+"/Spectrum Parameters"][...]=self.value_matrix
         else:
             response_list={}
             for det in det_list:
@@ -487,9 +538,11 @@ class GridPoint():
                     #self.response_generator[det][i,j].update({"significance":self.response_generator[det][i, j]["generator"].significance})
 
 
-    def iterate_signal_to_noise(self, i, j, snr=20.):
+    def iterate_signal_to_noise(self, i, j, snr=20.,e=0.1):
+        '''
+        Iterate over astromodel spectrum smplitude "F" so that each gridpoint has around the same signal to noise ratio
+        '''
 
-        e=0.1
         bgk_K=10
 
         sigmax=self.calc_sig_max(bgk_K, i, j)
@@ -500,7 +553,7 @@ class GridPoint():
             # for det in det_list:
             #     self.response_generator[det][i,j]['generator'].view_count_spectrum().savefig("result_"+str(det)+"_"+str(round(bgk_K,5))+"_"+str(self.K_matrix[i,j])+".png")
             if K_temp>1000:
-                return "ConvergenceError"
+                print("ConvergenceError")
             elif K_temp<1E-30:
                 self.K_matrix[i,j]=np.random.randint(1,20)*1E-6
             else:
@@ -509,9 +562,8 @@ class GridPoint():
             self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=200,opt=0)
             sigmax=self.calc_sig_max(bgk_K, i, j)
             sr=abs((sigmax/snr)-1)
-            print(sigmax)
-            print("New K["+str(i)+","+str(j)+"]: "+ str(self.K_matrix[i,j]))
-            print("\n==============\n")
+
+        self.value_matrix[i,j]["F"]=self.K_matrix[i,j]
 
 
     def calc_sig_max(self, bgk_K, i, j):
@@ -523,11 +575,19 @@ class GridPoint():
         return max(siglist)
 
     def create_fisher_samples(self, k, n_samples):
-        #create list with coordinates from fisher bir distribution
+        '''create list with coordinates from fisher-bingham distribution'''
         self.fisher_samples=fb83(k*np.array(self.coord),[0,0,0]).rvs(n_samples)
         self.fisher_samples_radec=self.calc_j2000(self.fisher_samples.T)
+        for i,sample in enumerate(self.fisher_samples_radec):
+            self.simulation_file["grid/"+self.name+"/fisher"].create_group("f"+str(i))
+            self.simulation_file["grid/"+self.name+"/fisher/f"+str(i)].attrs["Position"]=[sample.ra.degree,sample.dec.degree]
 
-    def refit_spectra(self, n_detectors=4,ra=None, dec=None, use_fisher_samples=False):
+    def refit_spectra(self, directory, n_detectors=4,ra=None, dec=None, use_fisher_samples=False):
+        '''
+        Run a bayesian analysis on all Grid spectra
+        use_fisher_samples:
+        Run bayesian analysis for the random distributed fisher samples around original position.
+        '''
         if ra==None and dec == None:
             ra = self.ra
             dec = self.dec
@@ -572,7 +632,12 @@ class GridPoint():
                     ba[ij_key]=BayesianAnalysis(model,data[ij_key])
                     ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
                     if rank==0:
-                        ba[ij_key].results.write_to('results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+                        dirpath = directory+"/SimulationFiles/"+self.name+"/Fisher/"
+                        if not os.path.exists(dirpath):
+                            os.makedirs(dirpath)
+                        ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+                        fits=self.simulation_file["grid/"+self.name+"/fisher/f"+str(n)].create_group("("+str(i)+","+str(j)+")")
+                        fits.attrs["FITSPath"]=directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits"
 
         else:
             # spectrum=Cutoff_powerlaw()
@@ -608,7 +673,12 @@ class GridPoint():
                 ba[ij_key]=BayesianAnalysis(model,data[ij_key])
                 ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
                 if rank==0:
-                    ba[ij_key].results.write_to('results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+                    dirpath = directory+"/SimulationFiles/"+self.name+"/"
+                    if not os.path.exists(dirpath):
+                        os.makedirs(dirpath)
+                    ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+                    fits=self.simulation_file["grid/"+self.name].create_group("("+str(i)+","+str(j)+")")
+                    fits.attrs["FITSPath"]=directory+'/SimulationFiles/'+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits"
 
 
 
