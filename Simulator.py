@@ -118,50 +118,53 @@ class Simulator():
         dt: stepsize
         '''
         # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
-        particles = self.get_coords_from_gridpoints()
-        if len(particles)==1:
-            print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
-            return 0
+        if rank==0: 
+            particles = self.get_coords_from_gridpoints()
+            if len(particles)==1:
+                print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
+                return 0
             
 
-        steps = range(Nsteps)
+            steps = range(Nsteps)
+            
+            def force_law(pos1, pos2):
+                dist = np.linalg.norm(pos1-pos2, 2)
+                return (pos1-pos2)/(dist**3)
 
-        def force_law(pos1, pos2):
-            dist = np.linalg.norm(pos1-pos2, 2)
-            return (pos1-pos2)/(dist**3)
+            oldparticles = particles
+            oldparticles_temp = particles
+            it = 0
+            for step in steps:
+                i = 0
+                for particle in particles:
+                    distlist = []
+                    otherparticles = np.delete(particles, i, axis=0)
+                    force = np.zeros(3)
+                    for otherparticle in otherparticles:
 
-        oldparticles = particles
-        oldparticles_temp = particles
-        it = 0
-        for step in steps:
-            i = 0
-            for particle in particles:
-                distlist = []
-                otherparticles = np.delete(particles, i, axis=0)
-                force = np.zeros(3)
-                for otherparticle in otherparticles:
+                        distance = np.linalg.norm(particle-otherparticle)
+                        distlist.append(distance)
 
-                    distance = np.linalg.norm(particle-otherparticle)
-                    distlist.append(distance)
+                        force = force+force_law(particle, otherparticle)
+                        normalcomponent = particle/np.linalg.norm(particle)
+                        force = force-np.dot(normalcomponent, force)*normalcomponent
 
-                    force = force+force_law(particle, otherparticle)
-                normalcomponent = particle/np.linalg.norm(particle)
-                force = force-np.dot(normalcomponent, force)*normalcomponent
+                        if np.amin(distlist) > 1:
+                            force *= 3
 
-                if np.amin(distlist) > 1:
-                    force *= 3
+                            if it == 0:
+                                newp = particle+0.5*force*dt**2
+                                particles[i] = newp/np.linalg.norm(newp, 2)
+                        else:
+                            oldparticles_temp[i] = particles[i]
+                            newp = 2*particle-oldparticles[i]+force*dt**2
+                            particles[i] = newp/np.linalg.norm(newp, 2)
+                            oldparticles[i] = oldparticles_temp[i]
+                        i += 1
+                    it += 1
 
-                if it == 0:
-                    newp = particle+0.5*force*dt**2
-                    particles[i] = newp/np.linalg.norm(newp, 2)
-                else:
-                    oldparticles_temp[i] = particles[i]
-                    newp = 2*particle-oldparticles[i]+force*dt**2
-                    particles[i] = newp/np.linalg.norm(newp, 2)
-                    oldparticles[i] = oldparticles_temp[i]
-                i += 1
-            it += 1
-
+        MPI.COMM_WORLD.Barrier()
+        particles = MPI.COMM_WORLD.Bcast(particles,root=0)
         for i in range(len(self.grid)):
             self.grid[i].update_coord(particles[i])
 
