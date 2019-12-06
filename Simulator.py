@@ -49,7 +49,7 @@ class Simulator():
         print(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')
         self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')[0]
 
-    def fibonacci_sphere(self, randomize=True):
+    def fibonacci_sphere(self, randomize=False):
         """
         The standard algorithm for isotropic point distribution on a sphere based on the fibonacci-series
         """
@@ -57,19 +57,26 @@ class Simulator():
         rnd = 1.
         if randomize:
             rnd = random.random()*samples
-            points = []
-            offset = 2./samples
-            increment = math.pi*(3.-math.sqrt(5.))
+        else: rnd=0
 
-            for i in range(samples):
-                y = ((i*offset)-1)+(offset/2)
-                r = math.sqrt(1-y**2)
-                phi = ((i+rnd) % samples)*increment
-                x = math.cos(phi)*r
-                z = math.sin(phi)*r
+        points = []
+        offset = 2./samples
+        increment = math.pi*(3.-math.sqrt(5.))
+
+        for i in range(samples):
+            y = ((i*offset)-1)+(offset/2)
+            r = math.sqrt(1-y**2)
+            phi = ((i+rnd) % samples)*increment
+            x = math.cos(phi)*r
+            z = math.sin(phi)*r
+            if rank==0:
                 points.append(
                     GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init,self.simulation_file))
-            return np.array(points)
+            else:
+                points.append(
+                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init))
+            
+        return np.array(points)
 
     def voronoi_sphere(self):
         """
@@ -118,11 +125,11 @@ class Simulator():
         dt: stepsize
         '''
         # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
+        particles = self.get_coords_from_gridpoints()
+        if len(particles)==1:
+            print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
+            return 0
         if rank==0: 
-            particles = self.get_coords_from_gridpoints()
-            if len(particles)==1:
-                print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
-                return 0
             
 
             steps = range(Nsteps)
@@ -217,9 +224,10 @@ class Simulator():
         try:
             for gp in self.grid:
                 gp.add_j2000(self.sat_coord, self.sat_quat)
-                if not self.j2000_generate :
-                    self.simulation_file["grid"].create_group(gp.name)
-                self.simulation_file["grid"][gp.name].attrs["True Position"]=[gp.ra,gp.dec]
+                if rank==0:
+                    if not self.j2000_generate :
+                        self.simulation_file["grid"].create_group(gp.name)
+                    self.simulation_file["grid"][gp.name].attrs["True Position"]=[gp.ra,gp.dec]
 
             self.j2000_generate = True
         except:
@@ -314,6 +322,12 @@ class Simulator():
             gp.generate_DRM_spectrum()
             gp.save_pha(self.directory,overwrite=True)
 
+        MPI.COMM_WORLD.Barrier()
+
+        if rank==0:
+            for gp in self.grid:
+                self.simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrix
+
     def save_DRM_spectra(self,overwrite=True):
 
         for gp in self.grid:
@@ -367,7 +381,8 @@ class Simulator():
         k: Fisher concentration constant
         '''
         for gp in self.grid:
-            self.simulation_file["grid/"+gp.name].create_group("fisher")
+            if rank==0:
+                self.simulation_file["grid/"+gp.name].create_group("fisher")
             gp.create_fisher_samples(k, n_samples)
             gp.refit_spectra(self.directory,n_detectors=n_detectors,use_fisher_samples=True)
 
@@ -384,7 +399,7 @@ class GridPoint():
     Fisher Distribution
     '''
 
-    def __init__(self, name, coord, dim, det_rsp, K_init, simulation_file):
+    def __init__(self, name, coord, dim, det_rsp, K_init, simulation_file=None):
         self.name = name # string "gp0"
         self.coord = coord # array [x,y,z] Coordinates
         self.dim = dim # Spectrum Matrix Dimensions tuple (2,2)
@@ -529,7 +544,6 @@ class GridPoint():
                         with open("ConvergenceError.csv","a") as f:
                             writer=csv.writer(f)
                             writer.writerow([self.ra,self.dec])
-            self.simulation_file['grid/'+self.name+"/Spectrum Parameters"][...]=self.value_matrix
         else:
             response_list={}
             for det in det_list:
@@ -581,9 +595,10 @@ class GridPoint():
         '''create list with coordinates from fisher-bingham distribution'''
         self.fisher_samples=fb83(k*np.array(self.coord),[0,0,0]).rvs(n_samples)
         self.fisher_samples_radec=self.calc_j2000(self.fisher_samples.T)
-        for i,sample in enumerate(self.fisher_samples_radec):
-            self.simulation_file["grid/"+self.name+"/fisher"].create_group("f"+str(i))
-            self.simulation_file["grid/"+self.name+"/fisher/f"+str(i)].attrs["Position"]=[sample.ra.degree,sample.dec.degree]
+        if rank==0:
+            for i,sample in enumerate(self.fisher_samples_radec):
+                self.simulation_file["grid/"+self.name+"/fisher"].create_group("f"+str(i))
+                self.simulation_file["grid/"+self.name+"/fisher/f"+str(i)].attrs["Position"]=[sample.ra.degree,sample.dec.degree]
 
     def refit_spectra(self, directory, n_detectors=4,ra=None, dec=None, use_fisher_samples=False):
         '''
