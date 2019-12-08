@@ -46,7 +46,6 @@ class Simulator():
         self.directory= directory
         self.trigger = trigger
         self.trigger_folder= self.directory +"/rawdata/"+trigger
-        print(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')
         self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')[0]
 
     def fibonacci_sphere(self, randomize=False):
@@ -76,7 +75,7 @@ class Simulator():
                 points.append(
                     GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init))
             
-        return np.array(points)
+        return points
 
     def voronoi_sphere(self):
         """
@@ -112,7 +111,7 @@ class Simulator():
             points.append(
                 GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension,self.det_rsp,self.K_init))
 
-        return np.array(points)
+        return points
 
     def coulomb_refining(self, Nsteps, dt=0.1):
         '''
@@ -126,11 +125,13 @@ class Simulator():
         '''
         # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
         particles = self.get_coords_from_gridpoints()
+        print(particles)
         if len(particles)==1:
             print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
             return 0
         if rank==0: 
             
+            print(particles)
 
             steps = range(Nsteps)
             
@@ -147,35 +148,37 @@ class Simulator():
                     distlist = []
                     otherparticles = np.delete(particles, i, axis=0)
                     force = np.zeros(3)
+
                     for otherparticle in otherparticles:
 
                         distance = np.linalg.norm(particle-otherparticle)
                         distlist.append(distance)
 
                         force = force+force_law(particle, otherparticle)
-                        normalcomponent = particle/np.linalg.norm(particle)
-                        force = force-np.dot(normalcomponent, force)*normalcomponent
 
-                        if np.amin(distlist) > 1:
-                            force *= 3
+                    normalcomponent = particle/np.linalg.norm(particle)
+                    force = force-np.dot(normalcomponent, force)*normalcomponent
 
-                            if it == 0:
-                                newp = particle+0.5*force*dt**2
-                                particles[i] = newp/np.linalg.norm(newp, 2)
-                        else:
-                            oldparticles_temp[i] = particles[i]
-                            newp = 2*particle-oldparticles[i]+force*dt**2
-                            particles[i] = newp/np.linalg.norm(newp, 2)
-                            oldparticles[i] = oldparticles_temp[i]
-                        i += 1
-                    it += 1
+                    if np.amin(distlist) > 1:
+                        force *= 3
+
+                    if it == 0:
+                        newp = particle+0.5*force*dt**2
+                        particles[i] = newp/np.linalg.norm(newp, 2)
+                    else:
+                        oldparticles_temp[i] = particles[i]
+                        newp = 2*particle-oldparticles[i]+force*dt**2
+                    particles[i] = newp/np.linalg.norm(newp, 2)
+                    oldparticles[i] = oldparticles_temp[i]
+                    i += 1
+                it += 1
 
         MPI.COMM_WORLD.Barrier()
-        particles = MPI.COMM_WORLD.Bcast(particles,root=0)
-        for i in range(len(self.grid)):
-            self.grid[i].update_coord(particles[i])
+        particles = MPI.COMM_WORLD.bcast(particles,root=0)
+        for i,gp in enumerate(self.grid):
+            gp.update_coord(particles[i])
 
-    def setup(self,K, irange=[-1.5, -1], crange=[100, 400], algorithm='Fibonacci' ):
+    def setup(self,K, irange=[-2, -1], crange=[100, 400], algorithm='Fibonacci' ):
         '''
         Setup the GRB grid the spectrum matrices
         and the background function for your Simulation
@@ -189,11 +192,11 @@ class Simulator():
         self.indexrange = irange
         self.cutoffrange = crange
         self.K_init = K
+        self.j2000_generate=False
 
         #Response Generator Generation
         self.det_rsp = dict()
         os.chdir(self.trigger_folder)
-        print(os.getcwd())
         for det in det_list:
             rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0], trigdat=self.trigfile, mat_type=2, cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0])
 
@@ -204,6 +207,7 @@ class Simulator():
         if algorithm == 'Fibonacci':
             self.grid = self.fibonacci_sphere()
             self.generate_j2000()
+            print(self.grid[0].ra)
             #TODO Correct the True Variable. Is it still useful? 
             if self.j2000_generate == True:
                 self.generate_j2000()
@@ -217,7 +221,6 @@ class Simulator():
         '''
         Calculate Ra and Dec Values for your GridPoints
         '''
-        print(os.getcwd())
         position_interpolator = PositionInterpolator(trigdat=self.trigfile)
         self.sat_coord = position_interpolator.sc_pos(time)
         self.sat_quat = position_interpolator.quaternion(time)
@@ -320,6 +323,7 @@ class Simulator():
             if i%size!=rank: continue
             print("GridPoint %d being done by processor %d" %(i,rank))
             gp.generate_DRM_spectrum()
+            print("Save PHA "+str(i))
             gp.save_pha(self.directory,overwrite=True)
 
         MPI.COMM_WORLD.Barrier()
@@ -372,7 +376,7 @@ class Simulator():
         '''
 
         for gp in self.grid:
-            gp.refit_spectra(n_detectors=n_detectors)
+            gp.refit_spectra(self.directory,n_detectors=n_detectors)
 
     def run_fisher(self,n_detectors, n_samples, k):
         '''
@@ -516,7 +520,6 @@ class GridPoint():
 
         '''
         self.coord = new_coord
-        self.simulation_file["grid/"+self.name].attrs["True Position"]=new_coord
 
     def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False,e=0.1):
         '''
@@ -531,12 +534,18 @@ class GridPoint():
         if ra==None and dec == None:
             ra = self.ra
             dec = self.dec
+            print(ra)
+            print(dec)
         if not only_response:
-
+            print("Calc Response")
             for det in det_list:
                 self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
+
+                print("Response done")
+                
                 self.response_generator[det] = np.empty(
                     self.dim, dtype=classmethod)
+            print("Iterating")
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
                     res = self.iterate_signal_to_noise(i,j,e=e)
@@ -579,6 +588,7 @@ class GridPoint():
             self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=200,opt=0)
             sigmax=self.calc_sig_max(bgk_K, i, j)
             sr=abs((sigmax/snr)-1)
+            print("New K: "+ str(self.K_matrix[i,j]))
 
         self.value_matrix[i,j]["F"]=self.K_matrix[i,j]
 
@@ -625,7 +635,6 @@ class GridPoint():
                 spectrum.alpha.set_uninformative_prior(Uniform_prior)
                 spectrum.beta.fix=True
                 spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
-                print(sample.ra)
 
                 ps=PointSource(self.name,ra=float(sample.ra.degree),dec=float(sample.dec.degree), spectral_shape=spectrum)
                 full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
