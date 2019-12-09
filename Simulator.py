@@ -688,7 +688,7 @@ class GridPoint():
                     # jl[ij_key]=JointLikelihood(model,data[ij_key])
                     # result[ij_key]=jl[ij_key].fit()
                     ba[ij_key]=BayesianAnalysis(model,data[ij_key])
-                    ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
+                    ba[ij_key].sample_multinest(800,verbose=False,resume=False,importance_nested_sampling=False)
                     if rank==0:
                         dirpath = directory+"/SimulationFiles/"+self.name+"/Fisher/"
                         if not os.path.exists(dirpath):
@@ -729,7 +729,7 @@ class GridPoint():
                 # jl[ij_key]=JointLikelihood(model,data[ij_key])
                 # result[ij_key]=jl[ij_key].fit()
                 ba[ij_key]=BayesianAnalysis(model,data[ij_key])
-                ba[ij_key].sample_multinest(400,verbose=True,resume=False,importance_nested_sampling=False)
+                ba[ij_key].sample_multinest(800,verbose=False,resume=False,importance_nested_sampling=False)
                 if rank==0:
                     dirpath = directory+"/SimulationFiles/"+self.name+"/"
                     if not os.path.exists(dirpath):
