@@ -150,6 +150,7 @@ class Simulator():
                     force = np.zeros(3)
 
                     for otherparticle in otherparticles:
+                        # Adding all N-1 particle forces
 
                         distance = np.linalg.norm(particle-otherparticle)
                         distlist.append(distance)
@@ -157,15 +158,21 @@ class Simulator():
                         force = force+force_law(particle, otherparticle)
 
                     normalcomponent = particle/np.linalg.norm(particle)
+                    # Use only tangential part of force
                     force = force-np.dot(normalcomponent, force)*normalcomponent
 
+
                     if np.amin(distlist) > 1:
+                        # If particle is very far from its closest neighbour we want to increase to force to
+                        # speed up convergence to stable configuration
                         force *= 3
 
                     if it == 0:
+                        # Velocity Verlet Initialization
                         newp = particle+0.5*force*dt**2
                         particles[i] = newp/np.linalg.norm(newp, 2)
                     else:
+                        # Velocity verlet step
                         oldparticles_temp[i] = particles[i]
                         newp = 2*particle-oldparticles[i]+force*dt**2
                     particles[i] = newp/np.linalg.norm(newp, 2)
@@ -173,9 +180,13 @@ class Simulator():
                     i += 1
                 it += 1
 
+        
         MPI.COMM_WORLD.Barrier()
+        # MPI Broadcast Grid to all processes
         particles = MPI.COMM_WORLD.bcast(particles,root=0)
+
         for i,gp in enumerate(self.grid):
+            # Update coordinates
             gp.update_coord(particles[i])
 
     def setup(self,K, irange=[-2, -1], crange=[100, 400], algorithm='Fibonacci' ):
@@ -198,7 +209,8 @@ class Simulator():
         self.det_rsp = dict()
         os.chdir(self.trigger_folder)
         for det in det_list:
-            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0], trigdat=self.trigfile, mat_type=2, cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0])
+            # Create Response Generator for every detector
+            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0], trigdat=self.trigfile, mat_type=2, cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0],occult=False)
 
             self.det_rsp[det] = rsp
         os.chdir(self.directory)
@@ -213,6 +225,7 @@ class Simulator():
                 self.generate_j2000()
 
         for point in self.grid:
+            # Generate Astromodels Spectra
             point.generate_astromodels_spectrum(i_min=float(min(irange)), i_max=float(max(irange)), c_min=float(min(crange)), c_max=float(max(crange)))
 
 
@@ -320,15 +333,18 @@ class Simulator():
         '''
 
         for i,gp in enumerate(self.grid):
+            # Parallel DRM Generation
             if i%size!=rank: continue
             print("GridPoint %d being done by processor %d" %(i,rank))
             gp.generate_DRM_spectrum()
             print("Save PHA "+str(i))
+            # Save PHA RSP files
             gp.save_pha(self.directory,overwrite=True)
 
         MPI.COMM_WORLD.Barrier()
 
         if rank==0:
+            # hdf5 logging
             for gp in self.grid:
                 self.simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrix
 
@@ -341,21 +357,30 @@ class Simulator():
         '''
         Load saved PHA files from folder saved_pha in Simulation grid
         '''
-        i_list = []
-        j_list = []
         dirs = 0
-        for _, dirnames, filenames in os.walk(self.directory+"/SimulationFiles/PHAFiles/"):
-            for filename in filenames:
-                i_list.append(filename.split("_")[1])
-                j_list.append(filename.split("_")[2][0])
+        for _, dirnames, filenames in os.walk(self.directory+"/SimulationFiles/"):
             dirs += len(dirnames)
+        if "Fisher" in dirnames:
+            dirs/=3
+        else:
+            dirs/=2
+        print("Number of dirs: "+str(dirs))
 
         assert len(self.grid) == dirs, "Number of gridpoints do not coincide"
-        assert int(max(i_list)) == self.spectrum_dimension[0]-1 and int(
-            max(j_list)) == self.spectrum_dimension[1]-1, "Dimensions do not coincide"
 
-        os.chdir(self.directory+"/SimulationFiles/PHAFiles/")
+        os.chdir(self.directory+"/SimulationFiles/")
+
         for gp in self.grid:
+            i_list = []
+            j_list = []
+
+            for _, dirnames, filenames in os.walk(self.directory+"/SimulationFiles/"+gp.name+"/PHAFiles/"):
+                for filename in filenames:
+                    i_list.append(filename.split("_")[1])
+                    j_list.append(filename.split("_")[2][0])
+
+            assert int(max(i_list)) == self.spectrum_dimension[0]-1 and int(
+                max(j_list)) == self.spectrum_dimension[1]-1, "Dimensions do not coincide"
 
             for det in det_list:
                 gp.response_generator[det] = np.empty(
@@ -365,10 +390,11 @@ class Simulator():
                     j = 0
                     for j in range(gp.dim[1]):
                         file_name = det+"_"+str(i)+"_"+str(j)
-                        file_path = gp.name + "/" + file_name
+                        file_path = gp.name + "/PHAFiles/" + file_name
 
                         gp.response_generator[det][i, j] = OGIPLike(gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)
         os.chdir(self.directory)
+
 
     def run(self,n_detectors=4):
         '''
@@ -496,7 +522,7 @@ class GridPoint():
                                   headers=range(self.dim[1]), showindex='always')))
 
     def save_pha(self, directory, overwrite):
-        dirpath = directory+"/SimulationFiles/PHAFiles/"+self.name
+        dirpath = directory+"/SimulationFiles/"+self.name+"/PHAFiles/"
         if not os.path.exists(dirpath):
             os.makedirs(dirpath)
         elif overwrite:
@@ -585,7 +611,10 @@ class GridPoint():
             else:
                 self.K_matrix[i,j]=K_temp
 
-            self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=200,opt=0)
+
+            print("xp: "+ str(self.value_matrix[i,j]["xp"]))
+            print("a: "+ str(self.value_matrix[i,j]["alpha"]))
+            self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=self.value_matrix[i,j]["xp"],alpha=self.value_matrix[i,j]["alpha"],opt=0)
             sigmax=self.calc_sig_max(bgk_K, i, j)
             sr=abs((sigmax/snr)-1)
             print("New K: "+ str(self.K_matrix[i,j]))
