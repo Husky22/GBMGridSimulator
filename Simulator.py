@@ -653,7 +653,9 @@ class GridPoint():
 
             for n,sample in enumerate(self.fisher_samples_radec):
 
-                new_response=self.generate_DRM_spectrum(sample.ra,sample.dec,only_response=True)
+                new_response=self.generate_DRM_spectrum(sample.ra.degree,sample.dec.degree,only_response=True)
+                for det in det_list:
+                    new_response[det].plot_matrix().save_fig(directory+"/SimulationFiles/"+self.name+"/Fisher/f"+str(n)+"_response_"+det+".png")
 
                 # for (i,j),value in np.ndenumerate(self.value_matrix):
                 #     for det in det_list:
