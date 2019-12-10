@@ -14,6 +14,7 @@ import random
 import matplotlib as mpl
 import csv
 import math
+import json
 import os
 from glob import glob
 import gbm_drm_gen as drm
@@ -244,6 +245,7 @@ class Simulator():
                     if not self.j2000_generate :
                         self.simulation_file["grid"].create_group(gp.name)
                     self.simulation_file["grid"][gp.name].attrs["True Position"]=[gp.ra,gp.dec]
+                    self.simulation_file["grid"][gp.name].attrs["True Position SC"]=gp.coord
 
             self.j2000_generate = True
         except:
@@ -336,7 +338,7 @@ class Simulator():
             # Parallel DRM Generation
             if i%size!=rank: continue
             print("GridPoint %d being done by processor %d" %(i,rank))
-            gp.generate_DRM_spectrum()
+            gp.generate_DRM_spectrum(snr=snr)
             print("Save PHA "+str(i))
             # Save PHA RSP files
             gp.save_pha(self.directory,overwrite=True)
@@ -547,7 +549,7 @@ class GridPoint():
         '''
         self.coord = new_coord
 
-    def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False,e=0.1):
+    def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False,snr=20.,e=0.1):
         '''
         Generate a DispersionSpectrum with a response matrix
         only_response = True:
@@ -574,7 +576,7 @@ class GridPoint():
             print("Iterating")
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
-                    res = self.iterate_signal_to_noise(i,j,e=e)
+                    res = self.iterate_signal_to_noise(i,j,e=e,snr=snr)
                     if res=="ConvergenceError":
                         with open("ConvergenceError.csv","a") as f:
                             writer=csv.writer(f)
@@ -612,12 +614,11 @@ class GridPoint():
                 self.K_matrix[i,j]=K_temp
 
 
-            print("xp: "+ str(self.value_matrix[i,j]["xp"]))
-            print("a: "+ str(self.value_matrix[i,j]["alpha"]))
             self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=self.value_matrix[i,j]["xp"],alpha=self.value_matrix[i,j]["alpha"],opt=0)
             sigmax=self.calc_sig_max(bgk_K, i, j)
             sr=abs((sigmax/snr)-1)
             print("New K: "+ str(self.K_matrix[i,j]))
+            print("SNR: "+str(sigmax))
 
         self.value_matrix[i,j]["F"]=self.K_matrix[i,j]
 
@@ -627,6 +628,11 @@ class GridPoint():
         print(self.K_matrix)
         for det in det_list:
             self.response_generator[det][i, j] = DispersionSpectrumLike.from_function(det+str(i)+str(j)+self.name, source_function=self.spectrum_matrix[i, j], background_function=Powerlaw(K=bgk_K,piv=100), response=self.response[det])
+            if det != 'b0' and det != 'b1':
+                self.response_generator[det][i,j].set_active_measurements('8.1-900')
+            else:
+                self.response_generator[det][i,j].set_active_measurements('250-30000')
+
             siglist.append(self.response_generator[det][i,j].significance)
         return max(siglist)
 
@@ -654,8 +660,12 @@ class GridPoint():
             for n,sample in enumerate(self.fisher_samples_radec):
 
                 new_response=self.generate_DRM_spectrum(sample.ra.degree,sample.dec.degree,only_response=True)
-                for det in det_list:
-                    new_response[det].plot_matrix().save_fig(directory+"/SimulationFiles/"+self.name+"/Fisher/f"+str(n)+"_response_"+det+".png")
+                if rank==0:
+                    dirpath = directory+"/SimulationFiles/"+self.name+"/Fisher/"
+                    if not os.path.exists(dirpath):
+                        os.makedirs(dirpath)
+                    for det in det_list:
+                        new_response[det].to_fits(directory+"/SimulationFiles/"+self.name+"/Fisher/f"+str(n)+"_response_"+det+".fits","test","test",overwrite=True)
 
                 # for (i,j),value in np.ndenumerate(self.value_matrix):
                 #     for det in det_list:
@@ -684,18 +694,24 @@ class GridPoint():
                         ls.append(tuple[0])
                     selected_sig[ij_key]=ls
                     #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
-                    data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0.,self.det_rsp[det],free_position=False) for det in selected_sig[ij_key]])
+                    for det in ls:
+                        self.response_generator[det][i,j]._response=new_response[det]
+                        if det != 'b0' and det != 'b1':
+                            self.response_generator[det][i,j].set_active_measurements('8.1-900')
+                        else:
+                            self.response_generator[det][i,j].set_active_measurements('250-30000')
+
+                    data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
+                    #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0.,self.det_rsp[det],free_position=False) for det in selected_sig[ij_key]])
                     # jl[ij_key]=JointLikelihood(model,data[ij_key])
                     # result[ij_key]=jl[ij_key].fit()
                     ba[ij_key]=BayesianAnalysis(model,data[ij_key])
-                    ba[ij_key].sample_multinest(800,verbose=False,resume=False,importance_nested_sampling=False)
+                    ba[ij_key].sample_multinest(800,verbose=True,resume=False,importance_nested_sampling=False)
                     if rank==0:
-                        dirpath = directory+"/SimulationFiles/"+self.name+"/Fisher/"
-                        if not os.path.exists(dirpath):
-                            os.makedirs(dirpath)
                         ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
                         fits=self.simulation_file["grid/"+self.name+"/fisher/f"+str(n)].create_group("("+str(i)+","+str(j)+")")
                         fits.attrs["FITSPath"]=directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits"
+                        fits.attrs["SelectedDetectors"]=ls
 
         else:
             # spectrum=Cutoff_powerlaw()
@@ -725,6 +741,11 @@ class GridPoint():
                     ls.append(tuple[0])
                     selected_sig[ij_key]=ls
                     #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+                for det in ls:
+                    if det != 'b0' and det != 'b1':
+                        self.response_generator[det][i,j].set_active_measurements('8.1-900')
+                    else:
+                        self.response_generator[det][i,j].set_active_measurements('250-30000')
                 data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
                 # jl[ij_key]=JointLikelihood(model,data[ij_key])
                 # result[ij_key]=jl[ij_key].fit()
@@ -737,6 +758,9 @@ class GridPoint():
                     ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
                     fits=self.simulation_file["grid/"+self.name].create_group("("+str(i)+","+str(j)+")")
                     fits.attrs["FITSPath"]=directory+'/SimulationFiles/'+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits"
+                    fits.attrs["SelectedDetectors"]=ls
+                    print(full_sig[ij_key])
+                    fits.attrs["SignificanceDict"]=json.dumps(full_sig[ij_key])
 
 
 
