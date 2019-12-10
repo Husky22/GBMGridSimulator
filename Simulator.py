@@ -1,32 +1,36 @@
-from tabulate import tabulate
+import csv
+import json
+import math
 import operator
-from IPython.display import HTML, display
-from gbmgeometry import PositionInterpolator, GBMFrame, gbm_frame, GBM
+import os
+import random
+
 import astropy.coordinates as coord
 import astropy.units as u
-from scipy.stats import f as fisher_f
-from threeML.utils.OGIP.response import OGIPResponse
-from threeML import *
-import astromodels
+import h5py
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import random
-import matplotlib as mpl
-import csv
-import math
-import json
-import os
-from glob import glob
-import gbm_drm_gen as drm
-from sphere.distribution import fb83
-import h5py
-mpl.use('Agg')
+from IPython.display import HTML, display
 from mpi4py import MPI
-rank=MPI.COMM_WORLD.Get_rank()
-size=MPI.COMM_WORLD.Get_size()
+from sphere.distribution import fb83
+from tabulate import tabulate
+import threeML as tml
+
+import gbm_drm_gen as drm
+from gbmgeometry import GBM, GBMFrame, PositionInterpolator, gbm_frame
+from glob import glob
+
+mpl.use('Agg')
+rank = MPI.COMM_WORLD.Get_rank()
+size = MPI.COMM_WORLD.Get_size()
+
+class SimulationObj(object):
+    pass
 
 
-class Simulator():
+
+class Simulator(SimulationObj):
 
     """
     Fermi GBM Simulator
@@ -37,17 +41,17 @@ class Simulator():
                 'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
 
     def __init__(self, name, source_number, spectrum_matrix_dimensions, directory, trigger = "131229277"):
-        self.simulation_name=name
+        self.simulation_name = name
         self.N = source_number
         self.spectrum_dimension = spectrum_matrix_dimensions
         self.grid = None
         self.j2000_generate = False
         self.indexrange = None
         self.cutoffrange = None
-        self.directory= directory
+        SimulationObj.directory = directory
         self.trigger = trigger
-        self.trigger_folder= self.directory +"/rawdata/"+trigger
-        self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+trigger+'_v0*.fit')[0]
+        self.trigger_folder = self.directory+"/rawdata/"+self.trigger
+        self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+self.trigger+'_v0*.fit')[0]
 
     def fibonacci_sphere(self, randomize=False):
         """
@@ -71,11 +75,10 @@ class Simulator():
             z = math.sin(phi)*r
             if rank==0:
                 points.append(
-                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init,self.simulation_file))
+                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp, self.K_init, self.simulation_file))
             else:
                 points.append(
                     GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init))
-            
         return points
 
     def voronoi_sphere(self):
@@ -127,16 +130,20 @@ class Simulator():
         # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
         particles = self.get_coords_from_gridpoints()
         print(particles)
-        if len(particles)==1:
+        if len(particles) == 1:
             print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
             return 0
-        if rank==0: 
-            
-            print(particles)
 
+        if rank==0:
+            print(particles)
             steps = range(Nsteps)
-            
-            def force_law(pos1, pos2):
+
+            def _force_law(pos1, pos2):
+                """force_law
+                   A simple inverse squared force law
+                :param pos1:
+                :param pos2:
+                """
                 dist = np.linalg.norm(pos1-pos2, 2)
                 return (pos1-pos2)/(dist**3)
 
@@ -156,7 +163,7 @@ class Simulator():
                         distance = np.linalg.norm(particle-otherparticle)
                         distlist.append(distance)
 
-                        force = force+force_law(particle, otherparticle)
+                        force = force+_force_law(particle, otherparticle)
 
                     normalcomponent = particle/np.linalg.norm(particle)
                     # Use only tangential part of force
@@ -181,53 +188,66 @@ class Simulator():
                     i += 1
                 it += 1
 
-        
         MPI.COMM_WORLD.Barrier()
         # MPI Broadcast Grid to all processes
-        particles = MPI.COMM_WORLD.bcast(particles,root=0)
+        particles = MPI.COMM_WORLD.bcast(particles, root=0)
 
-        for i,gp in enumerate(self.grid):
+        for i, gp in enumerate(self.grid):
             # Update coordinates
             gp.update_coord(particles[i])
 
-    def setup(self,K, irange=[-2, -1], crange=[100, 400], algorithm='Fibonacci' ):
+    def setup(self, K, irange=[-2, -1], crange=[100, 400], algorithm='Fibonacci' ):
+        '''Setup the GRB Grid
+
+        Parameters:
+        K (float): initial Amplitude of the Spectrum
+        irange (float list): index range
+        crange (float list): cutoff range
+        algorithm (string): Specify used algorithm for GridPoint distribution
+
+        Setup the GridPoints with its spectrum matrices and the background function for your Simulation.
+        Create a DRMGen Response Generator and calculate the RA and DEC for your GridPoints
         '''
-        Setup the GRB grid the spectrum matrices
-        and the background function for your Simulation
-        '''
-        if rank==0:
+        if rank == 0:
             self.simulation_file_path=self.directory+"/SimulationFiles/"+self.simulation_name+".hdf5"
+            print(self.simulation_file_path)
             self.simulation_file=h5py.File(self.simulation_file_path,"w")
-            f=self.simulation_file
-            gridh5=f.create_group("grid")
+            f = self.simulation_file
+            gridh5 = f.create_group("grid")
 
         self.indexrange = irange
         self.cutoffrange = crange
         self.K_init = K
-        self.j2000_generate=False
+        self.j2000_generate = False
 
         #Response Generator Generation
         self.det_rsp = dict()
         os.chdir(self.trigger_folder)
         for det in det_list:
             # Create Response Generator for every detector
-            rsp = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0], trigdat=self.trigfile, mat_type=2, cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0],occult=False)
+            self.det_rsp[det] = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0],
+                                              trigdat=self.trigfile,
+                                              mat_type=2,
+                                              cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0],
+                                              occult=False)
 
-            self.det_rsp[det] = rsp
         os.chdir(self.directory)
 
         # Grid Generation
         if algorithm == 'Fibonacci':
             self.grid = self.fibonacci_sphere()
+            print(self.trigfile)
             self.generate_j2000()
-            print(self.grid[0].ra)
-            #TODO Correct the True Variable. Is it still useful? 
-            if self.j2000_generate == True:
+            #TODO Correct the True Variable. Is it still useful?
+            if self.j2000_generate is True:
                 self.generate_j2000()
 
         for point in self.grid:
             # Generate Astromodels Spectra
-            point.generate_astromodels_spectrum(i_min=float(min(irange)), i_max=float(max(irange)), c_min=float(min(crange)), c_max=float(max(crange)))
+            point.generate_astromodels_spectrum(i_min=float(min(irange)),
+                                                i_max=float(max(irange)),
+                                                c_min=float(min(crange)),
+                                                c_max=float(max(crange)))
 
 
 
@@ -238,18 +258,17 @@ class Simulator():
         position_interpolator = PositionInterpolator(trigdat=self.trigfile)
         self.sat_coord = position_interpolator.sc_pos(time)
         self.sat_quat = position_interpolator.quaternion(time)
-        try:
-            for gp in self.grid:
-                gp.add_j2000(self.sat_coord, self.sat_quat)
-                if rank==0:
-                    if not self.j2000_generate :
-                        self.simulation_file["grid"].create_group(gp.name)
-                    self.simulation_file["grid"][gp.name].attrs["True Position"]=[gp.ra,gp.dec]
-                    self.simulation_file["grid"][gp.name].attrs["True Position SC"]=gp.coord
+        for gp in self.grid:
+            gp.add_j2000(self.sat_coord, self.sat_quat)
+            if rank==0:
+                if not self.j2000_generate :
+                    self.simulation_file["grid"].create_group(gp.name)
+                self.simulation_file["grid"][gp.name].attrs["True Position"]=[gp.ra,gp.dec]
+                self.simulation_file["grid"][gp.name].attrs["True Position SC"]=gp.coord
 
-            self.j2000_generate = True
-        except:
-            print("Error! Is trigdat path correct?")
+        self.j2000_generate = True
+        #  except:
+            #  print("Error! Is trigdat path correct?")
 
     def print_earth_points(self):
         gbm=GBM(self.sat_quat ,self.sat_coord*u.km)
@@ -292,6 +311,8 @@ class Simulator():
         response
         response_generator
 
+        :param trigger:
+
         '''
 
         det_list = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5',
@@ -314,13 +335,17 @@ class Simulator():
                 for i in range(np.shape(gp.spectrum_matrix)[0]):
                     j = 0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
-                        gp.response_generator[det][i, j] = DispersionSpectrumLike.from_function(
+                        gp.response_generator[det][i, j] = tml.DispersionSpectrumLike.from_function(
                             det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
         os.chdir(self.directory)
 
 
     def grid_generate_DRM_spectrum(self, snr=20., e=1.):
-        '''
+        """grid_generate_DRM_spectrum
+
+        :param snr: Signal to Noise ratio
+        :param e: Accepted error
+
         Generates DRMs for all GridPoints for all detectors and folds the given spectra matrices
         through it so that we get a simulated physical photon count spectrum
 
@@ -328,32 +353,36 @@ class Simulator():
 
         Generates for every GridPoint:
         response: type(InstrumentResponse)
-        response_generator: type(DispersionSpectrumLike)
+        response_generator: type(tml.DispersionSpectrumLike)
 
-        save: Save your response_generator as PHA file in the folder saved_pha for MPI4PY data distribution
+        Automatically saves your Spectra as PHA files
 
-        '''
+        """
 
-        for i,gp in enumerate(self.grid):
+        for i, gp in enumerate(self.grid):
             # Parallel DRM Generation
-            if i%size!=rank: continue
+            if i % size != rank: continue
             print("GridPoint %d being done by processor %d" %(i,rank))
             gp.generate_DRM_spectrum(snr=snr)
             print("Save PHA "+str(i))
             # Save PHA RSP files
-            gp.save_pha(self.directory,overwrite=True)
+            gp.save_pha(overwrite=True)
 
         MPI.COMM_WORLD.Barrier()
 
-        if rank==0:
+        if rank == 0:
             # hdf5 logging
             for gp in self.grid:
                 self.simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrix
 
     def save_DRM_spectra(self,overwrite=True):
+        """save_DRM_spectra
+
+        :param overwrite: Overwrite existing spectra
+        """
 
         for gp in self.grid:
-            gp.save_pha(self.directory,overwrite)
+            gp.save_pha(overwrite)
 
     def load_DRM_spectra(self):
         '''
@@ -394,7 +423,7 @@ class Simulator():
                         file_name = det+"_"+str(i)+"_"+str(j)
                         file_path = gp.name + "/PHAFiles/" + file_name
 
-                        gp.response_generator[det][i, j] = OGIPLike(gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)
+                        gp.response_generator[det][i, j] = tml.OGIPLike(gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)
         os.chdir(self.directory)
 
 
@@ -419,7 +448,7 @@ class Simulator():
             gp.refit_spectra(self.directory,n_detectors=n_detectors,use_fisher_samples=True)
 
 
-class GridPoint():
+class GridPoint(SimulationObj):
 
     '''
     One point in the simulation grid.
@@ -427,7 +456,7 @@ class GridPoint():
     Containing:
     Astromodel Spectra
     Position Information
-    DispersionSpectrumLike
+    tml.DispersionSpectrumLike
     Fisher Distribution
     '''
 
@@ -437,7 +466,7 @@ class GridPoint():
         self.dim = dim # Spectrum Matrix Dimensions tuple (2,2)
         self.j2000 = None # SkyCoord Object
         self.response = dict() # InstrumentResponse
-        self.response_generator = dict() # DispersionSpectrumLike
+        self.response_generator = dict() # tml.DispersionSpectrumLike
         self.det_rsp = det_rsp # DRMGen
         self.K_init=K_init # float
         self.simulation_file = simulation_file # h5py.File
@@ -466,11 +495,11 @@ class GridPoint():
         if rank==0:
             f=self.simulation_file['grid']
         i = 0
-        # source=PointSource()
+        # source=tml.PointSource()
         for index_i in index:
             j = 0
             for cutoff_i in cutoff:
-                self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_init,alpha=index_i,xp=cutoff_i,opt=0)
+                self.spectrum_matrix[i, j] = tml.Band_Calderone(F=self.K_init,alpha=index_i,xp=cutoff_i,opt=0)
                 self.value_matrix[i, j]["F"] = self.K_init
                 self.value_matrix[i, j]["xp"] = cutoff_i
                 self.value_matrix[i, j]["alpha"] = index_i
@@ -479,7 +508,7 @@ class GridPoint():
 
         if rank==0:
             f[self.name].create_dataset("Spectrum Parameters",self.dim,data=self.value_matrix)
-            f[self.name].attrs["Spectrum Type"]="Band_Calderone"
+            f[self.name].attrs["Spectrum Type"]="tml.Band_Calderone"
 
     def add_j2000(self, sat_coord, sat_quat, time=0.):
         """
@@ -514,7 +543,7 @@ class GridPoint():
         Returns coordinates in cartesian and ICRS and a table with the generated sample spectrum parameters
         '''
         print("GBM Cartesian Coordinates: " + str(self.coord))
-        if self.j2000 == None:
+        if self.j2000 is None:
             print(
                 "RA and DEC not calculated yet! Use generate_j2000 function of Simulator to do so.")
         else:
@@ -523,8 +552,8 @@ class GridPoint():
             display(HTML(tabulate(self.value_matrix_string, tablefmt='html',
                                   headers=range(self.dim[1]), showindex='always')))
 
-    def save_pha(self, directory, overwrite):
-        dirpath = directory+"/SimulationFiles/"+self.name+"/PHAFiles/"
+    def save_pha(self, overwrite):
+        dirpath = self.directory+"/SimulationFiles/"+self.name+"/PHAFiles/"
         if not os.path.exists(dirpath):
             os.makedirs(dirpath)
         elif overwrite:
@@ -540,7 +569,7 @@ class GridPoint():
                     self.response_generator[det][i, j].write_pha(
                         dirpath+"/"+det+"_"+str(i)+"_"+str(j), overwrite=True)
 
-        os.chdir(directory)
+        os.chdir(self.directory)
 
     def update_coord(self, new_coord):
         '''
@@ -559,7 +588,7 @@ class GridPoint():
         response
         response_generator
         '''
-        if ra==None and dec == None:
+        if ra is None and dec is None:
             ra = self.ra
             dec = self.dec
             print(ra)
@@ -570,9 +599,10 @@ class GridPoint():
                 self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
 
                 print("Response done")
-                
+
                 self.response_generator[det] = np.empty(
                     self.dim, dtype=classmethod)
+
             print("Iterating")
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
@@ -614,7 +644,7 @@ class GridPoint():
                 self.K_matrix[i,j]=K_temp
 
 
-            self.spectrum_matrix[i, j] = Band_Calderone(F=self.K_matrix[i,j],xp=self.value_matrix[i,j]["xp"],alpha=self.value_matrix[i,j]["alpha"],opt=0)
+            self.spectrum_matrix[i, j] = tml.Band_Calderone(F=self.K_matrix[i,j],xp=self.value_matrix[i,j]["xp"],alpha=self.value_matrix[i,j]["alpha"],opt=0)
             sigmax=self.calc_sig_max(bgk_K, i, j)
             sr=abs((sigmax/snr)-1)
             print("New K: "+ str(self.K_matrix[i,j]))
@@ -627,7 +657,7 @@ class GridPoint():
         siglist=[]
         print(self.K_matrix)
         for det in det_list:
-            self.response_generator[det][i, j] = DispersionSpectrumLike.from_function(det+str(i)+str(j)+self.name, source_function=self.spectrum_matrix[i, j], background_function=Powerlaw(K=bgk_K,piv=100), response=self.response[det])
+            self.response_generator[det][i, j] = tml.DispersionSpectrumLike.from_function(det+str(i)+str(j)+self.name, source_function=self.spectrum_matrix[i, j], background_function=tml.Powerlaw(K=bgk_K,piv=100), response=self.response[det])
             if det != 'b0' and det != 'b1':
                 self.response_generator[det][i,j].set_active_measurements('8.1-900')
             else:
@@ -651,7 +681,7 @@ class GridPoint():
         use_fisher_samples:
         Run bayesian analysis for the random distributed fisher samples around original position.
         '''
-        if ra==None and dec == None:
+        if ra is None and dec is None:
             ra = self.ra
             dec = self.dec
 
@@ -671,16 +701,16 @@ class GridPoint():
                 #     for det in det_list:
                 #         self.response_generator[det][i,j].response=new_response[det]
 
-                spectrum=Band_Calderone(opt=0)
-                spectrum.F.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
-                spectrum.alpha.set_uninformative_prior(Uniform_prior)
+                spectrum=tml.Band_Calderone(opt=0)
+                spectrum.F.prior=tml.Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
+                spectrum.alpha.set_uninformative_prior(tml.Uniform_prior)
                 spectrum.beta.fix=True
-                spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+                spectrum.xp.prior=tml.Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
 
-                ps=PointSource(self.name,ra=float(sample.ra.degree),dec=float(sample.dec.degree), spectral_shape=spectrum)
+                ps=tml.PointSource(self.name,ra=float(sample.ra.degree),dec=float(sample.dec.degree), spectral_shape=spectrum)
                 full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
                 selected_sig = {}
-                model=Model(ps)
+                model=tml.Model(ps)
                 result=dict()
                 jl={}
                 ba={}
@@ -693,7 +723,7 @@ class GridPoint():
                     for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
                         ls.append(tuple[0])
                     selected_sig[ij_key]=ls
-                    #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+                    #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
                     for det in ls:
                         self.response_generator[det][i,j]._response=new_response[det]
                         if det != 'b0' and det != 'b1':
@@ -701,11 +731,11 @@ class GridPoint():
                         else:
                             self.response_generator[det][i,j].set_active_measurements('250-30000')
 
-                    data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
-                    #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0.,self.det_rsp[det],free_position=False) for det in selected_sig[ij_key]])
+                    data[ij_key]=tml.DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
+                    #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0.,self.det_rsp[det],free_position=False) for det in selected_sig[ij_key]])
                     # jl[ij_key]=JointLikelihood(model,data[ij_key])
                     # result[ij_key]=jl[ij_key].fit()
-                    ba[ij_key]=BayesianAnalysis(model,data[ij_key])
+                    ba[ij_key]=tml.BayesianAnalysis(model,data[ij_key])
                     ba[ij_key].sample_multinest(800,verbose=True,resume=False,importance_nested_sampling=False)
                     if rank==0:
                         ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
@@ -715,19 +745,19 @@ class GridPoint():
 
         else:
             # spectrum=Cutoff_powerlaw()
-                # spectrum.K.prior=Log_uniform_prior(lower_bound=1E-3,upper_bound=1000)
-                # spectrum.index.set_uninformative_prior(Uniform_prior)
-                # spectrum.xc.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=10000)
-            spectrum=Band_Calderone(opt=0)
-            spectrum.F.prior=Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
-            spectrum.alpha.set_uninformative_prior(Uniform_prior)
+            # spectrum.K.prior=tml.Log_uniform_prior(lower_bound=1E-3,upper_bound=1000)
+            # spectrum.index.set_uninformative_prior(tml.Uniform_prior)
+            # spectrum.xc.prior=tml.Log_uniform_prior(lower_bound=1E-20,upper_bound=10000)
+            spectrum=tml.Band_Calderone(opt=0)
+            spectrum.F.prior=tml.Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
+            spectrum.alpha.set_uninformative_prior(tml.Uniform_prior)
             spectrum.beta.fix=True
-            spectrum.xp.prior=Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+            spectrum.xp.prior=tml.Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
 
-            ps=PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
+            ps=tml.PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
             full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
             selected_sig = {}
-            model=Model(ps)
+            model=tml.Model(ps)
             result=dict()
             jl={}
             ba={}
@@ -740,16 +770,16 @@ class GridPoint():
                 for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
                     ls.append(tuple[0])
                     selected_sig[ij_key]=ls
-                    #data[ij_key]=DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+                    #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
                 for det in ls:
                     if det != 'b0' and det != 'b1':
                         self.response_generator[det][i,j].set_active_measurements('8.1-900')
                     else:
                         self.response_generator[det][i,j].set_active_measurements('250-30000')
-                data[ij_key]=DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
+                data[ij_key]=tml.DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
                 # jl[ij_key]=JointLikelihood(model,data[ij_key])
                 # result[ij_key]=jl[ij_key].fit()
-                ba[ij_key]=BayesianAnalysis(model,data[ij_key])
+                ba[ij_key]=tml.BayesianAnalysis(model,data[ij_key])
                 ba[ij_key].sample_multinest(800,verbose=False,resume=False,importance_nested_sampling=False)
                 if rank==0:
                     dirpath = directory+"/SimulationFiles/"+self.name+"/"
@@ -761,7 +791,3 @@ class GridPoint():
                     fits.attrs["SelectedDetectors"]=ls
                     print(full_sig[ij_key])
                     fits.attrs["SignificanceDict"]=json.dumps(full_sig[ij_key])
-
-
-
-
