@@ -43,7 +43,7 @@ class Simulator(SimulationObj):
     def __init__(self, name, source_number, spectrum_matrix_dimensions, directory, trigger = "131229277"):
         self.simulation_name = name
         self.N = source_number
-        self.spectrum_dimension = spectrum_matrix_dimensions
+        self.spectrum_dimension = spectrum_matrix_dimensions # list
         self.grid = None
         self.j2000_generate = False
         self.indexrange = None
@@ -75,7 +75,7 @@ class Simulator(SimulationObj):
             z = math.sin(phi)*r
             if rank==0:
                 points.append(
-                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp, self.K_init, self.simulation_file))
+                    GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp, self.K_init))
             else:
                 points.append(
                     GridPoint('gp'+str(i), [x, y, z], self.spectrum_dimension, self.det_rsp,self.K_init))
@@ -208,10 +208,13 @@ class Simulator(SimulationObj):
         Setup the GridPoints with its spectrum matrices and the background function for your Simulation.
         Create a DRMGen Response Generator and calculate the RA and DEC for your GridPoints
         '''
+        SimulationObj.sim_path=self.directory+"/"+self.simulation_name+"_Files/"
         if rank == 0:
-            self.simulation_file_path=self.directory+"/SimulationFiles/"+self.simulation_name+".hdf5"
+            if not os.path.exists(self.sim_path):
+                os.makedirs(self.sim_path)
+            SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
             print(self.simulation_file_path)
-            self.simulation_file=h5py.File(self.simulation_file_path,"w")
+            SimulationObj.simulation_file=h5py.File(self.simulation_file_path,"w")
             f = self.simulation_file
             gridh5 = f.create_group("grid")
 
@@ -284,8 +287,7 @@ class Simulator(SimulationObj):
         for point in self.grid:
             ralist.append(point.j2000.ra)
             declist.append(point.j2000.dec)
-        icrsdata = coord.SkyCoord(
-            ra=ralist*u.degree, dec=declist*u.degree, frame=coord.ICRS)
+            icrsdata = coord.SkyCoord(ra=ralist*u.degree, dec=declist*u.degree, frame=coord.ICRS)
         plt.subplot(111, projection='aitoff')
         plt.grid(True)
         plt.scatter(icrsdata.ra.wrap_at('180d').radian, icrsdata.dec.radian)
@@ -389,23 +391,23 @@ class Simulator(SimulationObj):
         Load saved PHA files from folder saved_pha in Simulation grid
         '''
         dirs = 0
-        for _, dirnames, filenames in os.walk(self.directory+"/SimulationFiles/"):
+        for _, dirnames, filenames in os.walk(self.sim_path):
             dirs += len(dirnames)
         if "Fisher" in dirnames:
-            dirs/=3
+            dirs /= 3
         else:
-            dirs/=2
+            dirs /= 2
         print("Number of dirs: "+str(dirs))
 
         assert len(self.grid) == dirs, "Number of gridpoints do not coincide"
 
-        os.chdir(self.directory+"/SimulationFiles/")
+        os.chdir(self.sim_path)
 
         for gp in self.grid:
             i_list = []
             j_list = []
 
-            for _, dirnames, filenames in os.walk(self.directory+"/SimulationFiles/"+gp.name+"/PHAFiles/"):
+            for _, dirnames, filenames in os.walk(self.sim_path+gp.name+"/PHAFiles/"):
                 for filename in filenames:
                     i_list.append(filename.split("_")[1])
                     j_list.append(filename.split("_")[2][0])
@@ -433,7 +435,7 @@ class Simulator(SimulationObj):
         '''
 
         for gp in self.grid:
-            gp.refit_spectra(self.directory,n_detectors=n_detectors)
+            gp.refit_spectra(n_detectors=n_detectors)
 
     def run_fisher(self,n_detectors, n_samples, k):
         '''
@@ -445,22 +447,21 @@ class Simulator(SimulationObj):
             if rank==0:
                 self.simulation_file["grid/"+gp.name].create_group("fisher")
             gp.create_fisher_samples(k, n_samples)
-            gp.refit_spectra(self.directory,n_detectors=n_detectors,use_fisher_samples=True)
+            gp.refit_spectra(n_detectors=n_detectors,use_fisher_samples=True)
 
 
 class GridPoint(SimulationObj):
 
-    '''
-    One point in the simulation grid.
+    '''A point in the simulation grid.
 
     Containing:
     Astromodel Spectra
     Position Information
-    tml.DispersionSpectrumLike
+    DispersionSpectrumLike
     Fisher Distribution
     '''
 
-    def __init__(self, name, coord, dim, det_rsp, K_init, simulation_file=None):
+    def __init__(self, name, coord, dim, det_rsp, K_init):
         self.name = name # string "gp0"
         self.coord = coord # array [x,y,z] Coordinates
         self.dim = dim # Spectrum Matrix Dimensions tuple (2,2)
@@ -469,7 +470,6 @@ class GridPoint(SimulationObj):
         self.response_generator = dict() # tml.DispersionSpectrumLike
         self.det_rsp = det_rsp # DRMGen
         self.K_init=K_init # float
-        self.simulation_file = simulation_file # h5py.File
 
     def generate_astromodels_spectrum(self, i_max, i_min, c_max, c_min):
         """
@@ -511,13 +511,12 @@ class GridPoint(SimulationObj):
             f[self.name].attrs["Spectrum Type"]="tml.Band_Calderone"
 
     def add_j2000(self, sat_coord, sat_quat, time=0.):
-        """
+        """Add ra and dec coordinates to GridPoint
         Calculate the corresponding Ra and Dec coordinates
         for the already given coordinate in the Fermi-Frame
 
-        final_frame:
-        doesnt matter as gbm_frame.gbm_to_j2000 outputs only ICRS
         """
+
         self.sat_coord=sat_coord
         self.sat_quat=sat_quat
         x, y, z = sat_coord
@@ -531,6 +530,13 @@ class GridPoint(SimulationObj):
         self.dec = self.j2000.dec.degree
 
     def calc_j2000(self,coordinates):
+        '''Rather use add_j2000 for grid simulation purposes! Calculate RA and DEC
+
+
+        Returns:
+        A SkyCoord object in ICRS Frame
+
+        '''
         x, y, z = self.sat_coord
         q1, q2, q3, q4 = self.sat_quat
 
@@ -553,7 +559,7 @@ class GridPoint(SimulationObj):
                                   headers=range(self.dim[1]), showindex='always')))
 
     def save_pha(self, overwrite):
-        dirpath = self.directory+"/SimulationFiles/"+self.name+"/PHAFiles/"
+        dirpath = self.sim_path+self.name+"/PHAFiles/"
         if not os.path.exists(dirpath):
             os.makedirs(dirpath)
         elif overwrite:
@@ -574,27 +580,30 @@ class GridPoint(SimulationObj):
     def update_coord(self, new_coord):
         '''
         Update the coordinate of the GridPoint
-
         '''
         self.coord = new_coord
 
     def generate_DRM_spectrum(self, ra=None, dec=None, only_response=False,snr=20.,e=0.1):
-        '''
-        Generate a DispersionSpectrum with a response matrix
-        only_response = True:
-        Generate only a 3ML InstrumentResponse for given RA and DEC
+        '''Generate a DispersionSpectrum with a response matrix
+        Parameters
+
+
+        only_response (Boolean): generate only InstrumenResponse no DispersionSpectrumLike
 
         Generates:
         response
         response_generator
         '''
+
         if ra is None and dec is None:
             ra = self.ra
             dec = self.dec
             print(ra)
             print(dec)
+
         if not only_response:
             print("Calc Response")
+
             for det in det_list:
                 self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
 
@@ -603,7 +612,8 @@ class GridPoint(SimulationObj):
                 self.response_generator[det] = np.empty(
                     self.dim, dtype=classmethod)
 
-            print("Iterating")
+            print("Iterating Spectra")
+
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
                     res = self.iterate_signal_to_noise(i,j,e=e,snr=snr)
@@ -613,6 +623,7 @@ class GridPoint(SimulationObj):
                             writer.writerow([self.ra,self.dec])
         else:
             response_list={}
+
             for det in det_list:
                 response_list[det] = self.det_rsp[det].to_3ML_response(ra, dec)
             return response_list
@@ -624,7 +635,7 @@ class GridPoint(SimulationObj):
 
     def iterate_signal_to_noise(self, i, j, snr=20.,e=0.1):
         '''
-        Iterate over astromodel spectrum smplitude "F" so that each gridpoint has around the same signal to noise ratio
+        Iterate over astromodel spectrum smplitude "F" until each gridpoint has the same signal to noise ratio with an allowed deviation of e
         '''
 
         bgk_K=10
@@ -634,8 +645,7 @@ class GridPoint(SimulationObj):
 
         while sr > e:
             K_temp=self.K_matrix[i,j]*snr/sigmax
-            # for det in det_list:
-            #     self.response_generator[det][i,j]['generator'].view_count_spectrum().savefig("result_"+str(det)+"_"+str(round(bgk_K,5))+"_"+str(self.K_matrix[i,j])+".png")
+
             if K_temp>1000:
                 print("ConvergenceError")
             elif K_temp<1E-30:
@@ -643,21 +653,22 @@ class GridPoint(SimulationObj):
             else:
                 self.K_matrix[i,j]=K_temp
 
-
             self.spectrum_matrix[i, j] = tml.Band_Calderone(F=self.K_matrix[i,j],xp=self.value_matrix[i,j]["xp"],alpha=self.value_matrix[i,j]["alpha"],opt=0)
             sigmax=self.calc_sig_max(bgk_K, i, j)
             sr=abs((sigmax/snr)-1)
-            print("New K: "+ str(self.K_matrix[i,j]))
-            print("SNR: "+str(sigmax))
 
         self.value_matrix[i,j]["F"]=self.K_matrix[i,j]
 
 
     def calc_sig_max(self, bgk_K, i, j):
+        '''Calculate the maximum significance for GridPoint
+        '''
+
         siglist=[]
-        print(self.K_matrix)
+
         for det in det_list:
             self.response_generator[det][i, j] = tml.DispersionSpectrumLike.from_function(det+str(i)+str(j)+self.name, source_function=self.spectrum_matrix[i, j], background_function=tml.Powerlaw(K=bgk_K,piv=100), response=self.response[det])
+
             if det != 'b0' and det != 'b1':
                 self.response_generator[det][i,j].set_active_measurements('8.1-900')
             else:
@@ -666,16 +677,20 @@ class GridPoint(SimulationObj):
             siglist.append(self.response_generator[det][i,j].significance)
         return max(siglist)
 
+
     def create_fisher_samples(self, k, n_samples):
         '''create list with coordinates from fisher-bingham distribution'''
         self.fisher_samples=fb83(k*np.array(self.coord),[0,0,0]).rvs(n_samples)
         self.fisher_samples_radec=self.calc_j2000(self.fisher_samples.T)
+
         if rank==0:
+
             for i,sample in enumerate(self.fisher_samples_radec):
                 self.simulation_file["grid/"+self.name+"/fisher"].create_group("f"+str(i))
                 self.simulation_file["grid/"+self.name+"/fisher/f"+str(i)].attrs["Position"]=[sample.ra.degree,sample.dec.degree]
 
-    def refit_spectra(self, directory, n_detectors=4,ra=None, dec=None, use_fisher_samples=False):
+
+    def refit_spectra(self, n_detectors=4,ra=None, dec=None, use_fisher_samples=False):
         '''
         Run a bayesian analysis on all Grid spectra
         use_fisher_samples:
@@ -690,12 +705,29 @@ class GridPoint(SimulationObj):
             for n,sample in enumerate(self.fisher_samples_radec):
 
                 new_response=self.generate_DRM_spectrum(sample.ra.degree,sample.dec.degree,only_response=True)
+
                 if rank==0:
-                    dirpath = directory+"/SimulationFiles/"+self.name+"/Fisher/"
+                    dirpath = self.sim_path+self.name+"/Fisher/Responses"
+
                     if not os.path.exists(dirpath):
                         os.makedirs(dirpath)
+
                     for det in det_list:
-                        new_response[det].to_fits(directory+"/SimulationFiles/"+self.name+"/Fisher/f"+str(n)+"_response_"+det+".fits","test","test",overwrite=True)
+                        new_response[det].to_fits(dirpath+"/f"+str(n)+"_response_"+det+".fits","test","test",overwrite=True)
+
+
+                MPI.COMM_WORLD.Barrier()
+
+                obs_path =  {(str(i), str(j)): {det : self.response_generator[det][i, j]._observed_spectrum.filename for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
+                bak_path =  {(str(i), str(j)): {det : self.response_generator[det][i, j]._background_spectrum.filename for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
+                print(bak_path)
+                
+                fisher_temp_response = {ij_key : {det : tml.OGIPLike(self.name+"_"+det+"_"+str(ij_key[0])+"_"+str(ij_key[1])+"_fisher"+str(n),
+                                                                     observation = self.sim_path+obs_path[ij_key][det],
+                                                                     background = self.sim_path+bak_path[ij_key][det],
+                                                                     response = self.sim_path+self.name+"/Fisher/f"+str(n)+"_response_"+det+".fits",
+                                                                     spectrum_number = 1) for det in det_list} for ij_key  in bak_path}
+
 
                 # for (i,j),value in np.ndenumerate(self.value_matrix):
                 #     for det in det_list:
@@ -708,39 +740,40 @@ class GridPoint(SimulationObj):
                 spectrum.xp.prior=tml.Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
 
                 ps=tml.PointSource(self.name,ra=float(sample.ra.degree),dec=float(sample.dec.degree), spectral_shape=spectrum)
-                full_sig =  {(str(i), str(j)): {det : self.response_generator[det][i, j].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
+                full_sig =  {(str(i), str(j)): {det : fisher_temp_response[(str(i),str(j))][det].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
                 selected_sig = {}
                 model=tml.Model(ps)
                 result=dict()
                 jl={}
                 ba={}
                 data=dict()
+
                 for ij_key in full_sig:
                     i=int(ij_key[0])
                     j=int(ij_key[1])
                     ls=[]
                     lsval=[]
+
                     for tuple in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-n_detectors:]:
                         ls.append(tuple[0])
                     selected_sig[ij_key]=ls
                     #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
                     for det in ls:
-                        self.response_generator[det][i,j]._response=new_response[det]
                         if det != 'b0' and det != 'b1':
-                            self.response_generator[det][i,j].set_active_measurements('8.1-900')
+                            fisher_temp_response[(str(i),str(j))][det].set_active_measurements('8.1-900')
                         else:
-                            self.response_generator[det][i,j].set_active_measurements('250-30000')
+                            fisher_temp_response[(str(i),str(j))][det].set_active_measurements('250-30000')
 
-                    data[ij_key]=tml.DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
+                    data[ij_key]=tml.DataList(*[fisher_temp_response[(str(i),str(j))][det] for det in selected_sig[ij_key]])
                     #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0.,self.det_rsp[det],free_position=False) for det in selected_sig[ij_key]])
                     # jl[ij_key]=JointLikelihood(model,data[ij_key])
                     # result[ij_key]=jl[ij_key].fit()
                     ba[ij_key]=tml.BayesianAnalysis(model,data[ij_key])
                     ba[ij_key].sample_multinest(800,verbose=True,resume=False,importance_nested_sampling=False)
                     if rank==0:
-                        ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+                        ba[ij_key].results.write_to(self.sim_path+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
                         fits=self.simulation_file["grid/"+self.name+"/fisher/f"+str(n)].create_group("("+str(i)+","+str(j)+")")
-                        fits.attrs["FITSPath"]=directory+'/SimulationFiles/'+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits"
+                        fits.attrs["FITSPath"]=self.sim_path+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits"
                         fits.attrs["SelectedDetectors"]=ls
 
         else:
@@ -762,6 +795,7 @@ class GridPoint(SimulationObj):
             jl={}
             ba={}
             data=dict()
+
             for ij_key in full_sig:
                 i=int(ij_key[0])
                 j=int(ij_key[1])
@@ -771,23 +805,27 @@ class GridPoint(SimulationObj):
                     ls.append(tuple[0])
                     selected_sig[ij_key]=ls
                     #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
+
                 for det in ls:
                     if det != 'b0' and det != 'b1':
                         self.response_generator[det][i,j].set_active_measurements('8.1-900')
                     else:
                         self.response_generator[det][i,j].set_active_measurements('250-30000')
+
                 data[ij_key]=tml.DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
-                # jl[ij_key]=JointLikelihood(model,data[ij_key])
-                # result[ij_key]=jl[ij_key].fit()
                 ba[ij_key]=tml.BayesianAnalysis(model,data[ij_key])
-                ba[ij_key].sample_multinest(800,verbose=False,resume=False,importance_nested_sampling=False)
+                ba[ij_key].sample_multinest(800,
+                                            verbose=True,
+                                            resume=False,
+                                            importance_nested_sampling=False)
+
                 if rank==0:
-                    dirpath = directory+"/SimulationFiles/"+self.name+"/"
+                    dirpath = self.sim_path+self.name+"/"
                     if not os.path.exists(dirpath):
                         os.makedirs(dirpath)
-                    ba[ij_key].results.write_to(directory+'/SimulationFiles/'+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
+                    ba[ij_key].results.write_to(self.sim_path+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
                     fits=self.simulation_file["grid/"+self.name].create_group("("+str(i)+","+str(j)+")")
-                    fits.attrs["FITSPath"]=directory+'/SimulationFiles/'+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits"
+                    fits.attrs["FITSPath"]=self.sim_path+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits"
                     fits.attrs["SelectedDetectors"]=ls
                     print(full_sig[ij_key])
                     fits.attrs["SignificanceDict"]=json.dumps(full_sig[ij_key])
