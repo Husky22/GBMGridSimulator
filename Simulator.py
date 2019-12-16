@@ -1,4 +1,5 @@
 import csv
+import gc
 import json
 import math
 import operator
@@ -129,13 +130,12 @@ class Simulator(SimulationObj):
         '''
         # get array of coordinates from GridPoint array particles = self.get_coords_from_gridpoints()
         particles = self.get_coords_from_gridpoints()
-        print(particles)
         if len(particles) == 1:
             print("Only one GridPoint in Grid. No Coulomb Interaction possible. No Coordinates updated!")
             return 0
 
         if rank==0:
-            print(particles)
+            print("\nCoulomb Refining\n")
             steps = range(Nsteps)
 
             def _force_law(pos1, pos2):
@@ -150,43 +150,45 @@ class Simulator(SimulationObj):
             oldparticles = particles
             oldparticles_temp = particles
             it = 0
-            for step in steps:
-                i = 0
-                for particle in particles:
-                    distlist = []
-                    otherparticles = np.delete(particles, i, axis=0)
-                    force = np.zeros(3)
+            with tml.io.progress_bar.progress_bar(Nsteps) as progress:
+                for step in steps:
+                    i = 0
+                    for particle in particles:
+                        distlist = []
+                        otherparticles = np.delete(particles, i, axis=0)
+                        force = np.zeros(3)
 
-                    for otherparticle in otherparticles:
-                        # Adding all N-1 particle forces
+                        for otherparticle in otherparticles:
+                            # Adding all N-1 particle forces
 
-                        distance = np.linalg.norm(particle-otherparticle)
-                        distlist.append(distance)
+                            distance = np.linalg.norm(particle-otherparticle)
+                            distlist.append(distance)
 
-                        force = force+_force_law(particle, otherparticle)
+                            force = force+_force_law(particle, otherparticle)
 
-                    normalcomponent = particle/np.linalg.norm(particle)
-                    # Use only tangential part of force
-                    force = force-np.dot(normalcomponent, force)*normalcomponent
+                        normalcomponent = particle/np.linalg.norm(particle)
+                        # Use only tangential part of force
+                        force = force-np.dot(normalcomponent, force)*normalcomponent
 
 
-                    if np.amin(distlist) > 1:
-                        # If particle is very far from its closest neighbour we want to increase to force to
-                        # speed up convergence to stable configuration
-                        force *= 3
+                        if np.amin(distlist) > 1:
+                            # If particle is very far from its closest neighbour we want to increase to force to
+                            # speed up convergence to stable configuration
+                            force *= 3
 
-                    if it == 0:
-                        # Velocity Verlet Initialization
-                        newp = particle+0.5*force*dt**2
+                        if it == 0:
+                            # Velocity Verlet Initialization
+                            newp = particle+0.5*force*dt**2
+                            particles[i] = newp/np.linalg.norm(newp, 2)
+                        else:
+                            # Velocity verlet step
+                            oldparticles_temp[i] = particles[i]
+                            newp = 2*particle-oldparticles[i]+force*dt**2
                         particles[i] = newp/np.linalg.norm(newp, 2)
-                    else:
-                        # Velocity verlet step
-                        oldparticles_temp[i] = particles[i]
-                        newp = 2*particle-oldparticles[i]+force*dt**2
-                    particles[i] = newp/np.linalg.norm(newp, 2)
-                    oldparticles[i] = oldparticles_temp[i]
-                    i += 1
-                it += 1
+                        oldparticles[i] = oldparticles_temp[i]
+                        i += 1
+                    it += 1
+                    progress.animate(it)
 
         MPI.COMM_WORLD.Barrier()
         # MPI Broadcast Grid to all processes
@@ -210,11 +212,17 @@ class Simulator(SimulationObj):
         '''
         SimulationObj.sim_path=self.directory+"/"+self.simulation_name+"_Files/"
         if rank == 0:
+            print("Garbage Collection enabled: "+str(gc.isenabled())+"\n")
             if not os.path.exists(self.sim_path):
                 os.makedirs(self.sim_path)
             SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
-            print(self.simulation_file_path)
-            SimulationObj.simulation_file=h5py.File(self.simulation_file_path,"w")
+            for obj in gc.get_objects():
+                if isinstance(obj,h5py.File):
+                    try:
+                        obj.close()
+                        SimulationObj.simulation_file = h5py.File(self.simulation_file_path,"w")
+                    except:
+                        pass
             f = self.simulation_file
             gridh5 = f.create_group("grid")
 
@@ -239,7 +247,6 @@ class Simulator(SimulationObj):
         # Grid Generation
         if algorithm == 'Fibonacci':
             self.grid = self.fibonacci_sphere()
-            print(self.trigfile)
             self.generate_j2000()
             #TODO Correct the True Variable. Is it still useful?
             if self.j2000_generate is True:
@@ -338,7 +345,7 @@ class Simulator(SimulationObj):
                     j = 0
                     for j in range(np.shape(gp.spectrum_matrix)[0]):
                         gp.response_generator[det][i, j] = tml.DispersionSpectrumLike.from_function(
-                            det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det])
+                            det, source_function=gp.spectrum_matrix[i, j], background_function=self.background, response=gp.response[det],verbose = False)
         os.chdir(self.directory)
 
 
@@ -364,9 +371,9 @@ class Simulator(SimulationObj):
         for i, gp in enumerate(self.grid):
             # Parallel DRM Generation
             if i % size != rank: continue
-            print("GridPoint %d being done by processor %d" %(i,rank))
+            print("GridPoint %d being done by processor %d \n" %(i,rank))
             gp.generate_DRM_spectrum(snr=snr)
-            print("Save PHA "+str(i))
+            print("Save PHA "+str(i)+"\n")
             # Save PHA RSP files
             gp.save_pha(overwrite=True)
 
@@ -391,13 +398,16 @@ class Simulator(SimulationObj):
         Load saved PHA files from folder saved_pha in Simulation grid
         '''
         dirs = 0
+        dirlist = []
         for _, dirnames, filenames in os.walk(self.sim_path):
-            dirs += len(dirnames)
-        if "Fisher" in dirnames:
-            dirs /= 3
-        else:
-            dirs /= 2
-        print("Number of dirs: "+str(dirs))
+            dirlist.append(dirnames)
+
+        #Flattening dirlist
+        dirlist = [item for sublist in dirlist for item in sublist]
+
+        for item in dirlist:
+            if item.startswith('gp'):
+                dirs += 1
 
         assert len(self.grid) == dirs, "Number of gridpoints do not coincide"
 
@@ -425,7 +435,12 @@ class Simulator(SimulationObj):
                         file_name = det+"_"+str(i)+"_"+str(j)
                         file_path = gp.name + "/PHAFiles/" + file_name
 
-                        gp.response_generator[det][i, j] = tml.OGIPLike(gp.name+"_"+file_name, observation=file_path+".pha", background=file_path+"_bak.pha", response=file_path+".rsp", spectrum_number=1)
+                        gp.response_generator[det][i, j] = tml.OGIPLike(gp.name+"_"+file_name,
+                                                                        observation = file_path+".pha",
+                                                                        background = file_path+"_bak.pha",
+                                                                        response = file_path+".rsp",
+                                                                        spectrum_number = 1,
+                                                                        verbose = False)
         os.chdir(self.directory)
 
 
@@ -598,21 +613,18 @@ class GridPoint(SimulationObj):
         if ra is None and dec is None:
             ra = self.ra
             dec = self.dec
-            print(ra)
-            print(dec)
 
         if not only_response:
-            print("Calc Response")
+            print(self.name+": Calc Response\n")
 
             for det in det_list:
                 self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
 
-                print("Response done")
 
                 self.response_generator[det] = np.empty(
                     self.dim, dtype=classmethod)
 
-            print("Iterating Spectra")
+            print(self.name+": Iterating Spectra\n")
 
             for i in range(self.dim[0]):
                 for j in range(self.dim[1]):
@@ -682,6 +694,7 @@ class GridPoint(SimulationObj):
         '''create list with coordinates from fisher-bingham distribution'''
         self.fisher_samples=fb83(k*np.array(self.coord),[0,0,0]).rvs(n_samples)
         self.fisher_samples_radec=self.calc_j2000(self.fisher_samples.T)
+        self.n_fisher_samples = n_samples
 
         if rank==0:
 
@@ -720,13 +733,13 @@ class GridPoint(SimulationObj):
 
                 obs_path =  {(str(i), str(j)): {det : self.response_generator[det][i, j]._observed_spectrum.filename for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
                 bak_path =  {(str(i), str(j)): {det : self.response_generator[det][i, j]._background_spectrum.filename for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
-                print(bak_path)
                 
                 fisher_temp_response = {ij_key : {det : tml.OGIPLike(self.name+"_"+det+"_"+str(ij_key[0])+"_"+str(ij_key[1])+"_fisher"+str(n),
                                                                      observation = self.sim_path+obs_path[ij_key][det],
                                                                      background = self.sim_path+bak_path[ij_key][det],
-                                                                     response = self.sim_path+self.name+"/Fisher/f"+str(n)+"_response_"+det+".fits",
-                                                                     spectrum_number = 1) for det in det_list} for ij_key  in bak_path}
+                                                                     response = self.sim_path+self.name+"/Fisher/Responses/f"+str(n)+"_response_"+det+".fits",
+                                                                     spectrum_number = 1,
+                                                                     verbose = False) for det in det_list} for ij_key  in bak_path}
 
 
                 # for (i,j),value in np.ndenumerate(self.value_matrix):
@@ -769,12 +782,23 @@ class GridPoint(SimulationObj):
                     # jl[ij_key]=JointLikelihood(model,data[ij_key])
                     # result[ij_key]=jl[ij_key].fit()
                     ba[ij_key]=tml.BayesianAnalysis(model,data[ij_key])
-                    ba[ij_key].sample_multinest(800,verbose=True,resume=False,importance_nested_sampling=False)
+                    if rank == 0:
+                        print("========================")
+                        print("Fitting fisher spectrum number "+ str(n)+"\/"+str(self.n_fisher_samples)+" of "+ self.name + " (" + str(i)+","+str(j)+")")
+                        print("========================")
+                    ba[ij_key].sample_multinest(800,verbose=False,resume=False,importance_nested_sampling=False)
                     if rank==0:
+                        print("==============")
+                        print("Saving Results")
+                        print("==============")
                         ba[ij_key].results.write_to(self.sim_path+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits",overwrite=True)
                         fits=self.simulation_file["grid/"+self.name+"/fisher/f"+str(n)].create_group("("+str(i)+","+str(j)+")")
                         fits.attrs["FITSPath"]=self.sim_path+self.name+'/Fisher/results_'+self.name+"_fisher"+str(n)+"_"+str(i)+"_"+str(j)+".fits"
                         fits.attrs["SelectedDetectors"]=ls
+                    del(ba)
+                    del(data)
+
+                gc.collect(0)
 
         else:
             # spectrum=Cutoff_powerlaw()
@@ -814,12 +838,19 @@ class GridPoint(SimulationObj):
 
                 data[ij_key]=tml.DataList(*[self.response_generator[det][i,j] for det in selected_sig[ij_key]])
                 ba[ij_key]=tml.BayesianAnalysis(model,data[ij_key])
-                ba[ij_key].sample_multinest(800,
-                                            verbose=True,
+                if rank == 0:
+                    print("========================")
+                    print("Fitting true spectrum of "+ self.name + " (" + str(i)+","+str(j)+")")
+                    print("========================")
+                ba[ij_key].sample_multinest(1000,
+                                            verbose=False,
                                             resume=False,
                                             importance_nested_sampling=False)
 
                 if rank==0:
+                    print("==============")
+                    print("Saving Results")
+                    print("==============")
                     dirpath = self.sim_path+self.name+"/"
                     if not os.path.exists(dirpath):
                         os.makedirs(dirpath)
@@ -827,5 +858,13 @@ class GridPoint(SimulationObj):
                     fits=self.simulation_file["grid/"+self.name].create_group("("+str(i)+","+str(j)+")")
                     fits.attrs["FITSPath"]=self.sim_path+self.name+'/results_'+self.name+"_"+str(i)+"_"+str(j)+".fits"
                     fits.attrs["SelectedDetectors"]=ls
-                    print(full_sig[ij_key])
                     fits.attrs["SignificanceDict"]=json.dumps(full_sig[ij_key])
+
+                del(ba)
+                del(data)
+
+
+
+
+
+    
