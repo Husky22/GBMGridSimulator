@@ -383,22 +383,35 @@ class Simulator(SimulationObj):
 
         """
 
+        val_mat=[]
         for i, gp in enumerate(self.grid):
             # Parallel DRM Generation
             if i % size != rank: continue
             print("GridPoint %d being done by processor %d \n" %(i,rank))
             gp.generate_DRM_spectrum(snr=snr)
             print("Save PHA "+str(i)+"\n")
+            val_mat.append(gp.value_matrix)
             # Save PHA RSP files
             gp.save_pha(overwrite=True)
 
         MPI.COMM_WORLD.Barrier()
+        new_val_mat=np.array(MPI.COMM_WORLD.gather(val_mat,root=0),dtype='object')
+        if rank==0:
+            print(new_val_mat)
+            print(new_val_mat.shape)
+            new_val_mat_resh=new_val_mat.reshape((self.N,self.spectrum_dimension[0],self.spectrum_dimension[1]),order='F')
+            print(new_val_mat_resh)
 
         if rank == 0 and SimulationObj.skeleton is False:
             # hdf5 logging
+
+            print("Started Logging")
             simulation_file = h5py.File(self.simulation_file_path,"r+")
-            for gp in self.grid:
-                simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrix
+            for i,gp in enumerate(self.grid):
+                print(new_val_mat_resh[i])
+                simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=new_val_mat_resh[i]
+
+                #simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrixVhk
             simulation_file.close()
 
     def save_DRM_spectra(self,overwrite=True):
