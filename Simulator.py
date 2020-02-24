@@ -18,6 +18,7 @@ from sphere.distribution import fb83
 from tabulate import tabulate
 import threeML as tml
 import spherical_geometry as spg
+from sympy.utilities.iterables import multiset_permutations
 
 import gbm_drm_gen as drm
 from gbmgeometry import GBM, GBMFrame, PositionInterpolator, gbm_frame
@@ -43,6 +44,43 @@ class Simulator(SimulationObj):
                 'n6', 'n7', 'n8', 'n9', 'na', 'nb', 'b0', 'b1']
 
     def __init__(self, name, source_number, spectrum_matrix_dimensions, directory, trigger = "131229277"):
+        """
+        A Simulation instance containing the grid.
+
+        Instance serves for:
+         - Grid creation 
+        >>> Simulator.setup(...)
+         - Coordinate transformation
+        >>> Simulator.add_j2000(...)
+         - Spectra generation
+        >>> Simulator.grid_generate_DRM_spectrum(...)
+         - Fisher sample creation
+        >>> Simulator.create_fisher_samples(...)
+         - Bulk fitting of true and fisher points
+        >>> Simulator.refit_spectra(...)
+
+        Parameters
+        ----------
+        name : string
+            Name of the simulation to specify folder name to save the generated data
+            "FitSimulation1" results in the folder "FitSimulation1_Files"
+
+        source_number : int
+            Specifies the number of GridPoints (GRBs) to create
+
+        spectrum_matrix_dimensions : tuple
+            Specify the number of different spectral parameters to simulate 
+            (3,4) corresponds to 3 different index values and 4 different E_peak values
+
+        directory : string
+            Should contain the GBMGridSimulator path
+
+        trigger : string
+            Define the trigger to use for GBM position interpolation
+            looks for trigdat file in "directory/rawdata/trigger"
+            131229277 comes with GitHub Repository, others have to be downloaded
+
+        """
         self.simulation_name = name
         self.N = source_number
         self.spectrum_dimension = spectrum_matrix_dimensions # list
@@ -55,6 +93,86 @@ class Simulator(SimulationObj):
         self.trigger_folder = self.directory+"/rawdata/"+self.trigger
         self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+self.trigger+'_v0*.fit')[0]
 
+    def setup(self, K, irange=[-2, -1], crange=[100, 400], algorithm='Fibonacci', skeleton=False ):
+        '''
+        Setup the GRB Grid
+
+        Setup the GridPoints with its spectrum matrices and the background function for your Simulation.
+        Create a DRMGen Response Generator and calculate the RA and DEC for your GridPoints
+
+        Parameters
+        ----------
+        K : float
+            initial Amplitude of the Spectrum
+        irange : float list
+            index range
+        crange : float list
+            cutoff range
+        algorithm : string
+            Specify used algorithm for GridPoint distribution
+            'Fibonacci' is the only one available 
+        skeleton : boolean
+            Skeleton deactivates HDF5 saving
+
+        '''
+        SimulationObj.skeleton = skeleton
+        SimulationObj.sim_path=self.directory+"/"+self.simulation_name+"_Files/"
+        if rank == 0:
+            
+            print("Garbage Collection enabled: "+str(gc.isenabled())+"\n")
+            if skeleton is False:
+                if not os.path.exists(self.sim_path):
+                    os.makedirs(self.sim_path)
+                SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
+                #  for obj in gc.get_objects():
+                #      if isinstance(obj,h5py.File):
+                #          try:
+                #              obj.close()
+                #              simulation_file = h5py.File(self.simulation_file_path,"r+")
+                #          except:
+                #              pass
+                #          h5file_exists=True
+                #      else: h5file_exists=False
+
+                simulation_file = h5py.File(self.simulation_file_path,"a")
+                simulation_file.create_group("grid")
+                simulation_file.close()
+
+            else:
+                SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
+
+        self.indexrange = irange
+        self.cutoffrange = crange
+        self.K_init = K
+        self.j2000_generate = False
+
+        #Response Generator Generation
+        self.det_rsp = dict()
+        os.chdir(self.trigger_folder)
+        for det in det_list:
+            # Create Response Generator for every detector
+            self.det_rsp[det] = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0],
+                                              trigdat=self.trigfile,
+                                              mat_type=2,
+                                              cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0],
+                                              occult=False)
+
+        os.chdir(self.directory)
+
+        # Grid Generation
+        if algorithm == 'Fibonacci':
+            self.grid = self.fibonacci_sphere()
+            self.generate_j2000()
+            #TODO Correct the True Variable. Is it still useful?
+            if self.j2000_generate is True:
+                self.generate_j2000()
+
+        for point in self.grid:
+            # Generate Astromodels Spectra
+            point.generate_astromodels_spectrum(i_min=float(min(irange)),
+                                                i_max=float(max(irange)),
+                                                c_min=float(min(crange)),
+                                                c_max=float(max(crange)))
     def fibonacci_sphere(self, randomize=False):
         """
         The standard algorithm for isotropic point distribution on a sphere based on the fibonacci-series
@@ -200,77 +318,6 @@ class Simulator(SimulationObj):
             # Update coordinates
             gp.update_coord(particles[i])
 
-    def setup(self, K, irange=[-2, -1], crange=[100, 400], algorithm='Fibonacci', skeleton=False ):
-        '''Setup the GRB Grid
-
-        Parameters:
-        K (float): initial Amplitude of the Spectrum
-        irange (float list): index range
-        crange (float list): cutoff range
-        algorithm (string): Specify used algorithm for GridPoint distribution
-        skeleton (boolean): Skeleton deactivates HDF5 saving
-
-        Setup the GridPoints with its spectrum matrices and the background function for your Simulation.
-        Create a DRMGen Response Generator and calculate the RA and DEC for your GridPoints
-        '''
-        SimulationObj.skeleton = skeleton
-        SimulationObj.sim_path=self.directory+"/"+self.simulation_name+"_Files/"
-        if rank == 0:
-            
-            print("Garbage Collection enabled: "+str(gc.isenabled())+"\n")
-            if skeleton is False:
-                if not os.path.exists(self.sim_path):
-                    os.makedirs(self.sim_path)
-                SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
-                #  for obj in gc.get_objects():
-                #      if isinstance(obj,h5py.File):
-                #          try:
-                #              obj.close()
-                #              simulation_file = h5py.File(self.simulation_file_path,"r+")
-                #          except:
-                #              pass
-                #          h5file_exists=True
-                #      else: h5file_exists=False
-
-                simulation_file = h5py.File(self.simulation_file_path,"a")
-                simulation_file.create_group("grid")
-                simulation_file.close()
-
-            else:
-                SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
-
-        self.indexrange = irange
-        self.cutoffrange = crange
-        self.K_init = K
-        self.j2000_generate = False
-
-        #Response Generator Generation
-        self.det_rsp = dict()
-        os.chdir(self.trigger_folder)
-        for det in det_list:
-            # Create Response Generator for every detector
-            self.det_rsp[det] = drm.DRMGenTTE(tte_file=glob('glg_tte_'+det+'_bn'+self.trigger+'_v0*.fit.gz')[0],
-                                              trigdat=self.trigfile,
-                                              mat_type=2,
-                                              cspecfile=glob('glg_cspec_'+det+'_bn'+self.trigger+'_v0*.pha')[0],
-                                              occult=False)
-
-        os.chdir(self.directory)
-
-        # Grid Generation
-        if algorithm == 'Fibonacci':
-            self.grid = self.fibonacci_sphere()
-            self.generate_j2000()
-            #TODO Correct the True Variable. Is it still useful?
-            if self.j2000_generate is True:
-                self.generate_j2000()
-
-        for point in self.grid:
-            # Generate Astromodels Spectra
-            point.generate_astromodels_spectrum(i_min=float(min(irange)),
-                                                i_max=float(max(irange)),
-                                                c_min=float(min(crange)),
-                                                c_max=float(max(crange)))
 
 
 
@@ -497,6 +544,15 @@ class Simulator(SimulationObj):
             gp.create_fisher_samples(k, n_samples)
             gp.refit_spectra(n_detectors=n_detectors,use_fisher_samples=True,fixed_detectors=fixed_detectors)
 
+    def get_detector_cartesian(self):
+        gbm = GBM(self.sat_quat,sc_pos=self.sat_coord*u.km)
+        det=gbm.detectors
+        self.det_cartesian_dict={}
+        for key in det.keys():
+            _a=det[key].get_center()
+            _a.representation='cartesian'
+            self.det_cartesian_dict[key] = [_a.SCX,_a.SCY,_a.SCZ]
+
 
 class GridPoint(SimulationObj):
 
@@ -572,12 +628,15 @@ class GridPoint(SimulationObj):
         x, y, z = sat_coord
         q1, q2, q3, q4 = sat_quat
 
-        frame = GBMFrame(sc_pos_X=x, sc_pos_Y=y, sc_pos_Z=z, quaternion_1=q1, quaternion_2=q2, quaternion_3=q3, quaternion_4=q4,
+        self.frame = GBMFrame(sc_pos_X=x, sc_pos_Y=y, sc_pos_Z=z, quaternion_1=q1, quaternion_2=q2, quaternion_3=q3, quaternion_4=q4,
                         SCX=self.coord[0]*u.km, SCY=self.coord[1]*u.km, SCZ=self.coord[2]*u.km, representation='cartesian')
-        icrsdata = gbm_frame.gbm_to_j2000(frame, coord.ICRS)
+        icrsdata = gbm_frame.gbm_to_j2000(self.frame, coord.ICRS)
         self.j2000 = icrsdata
         self.ra = self.j2000.ra.degree
         self.dec = self.j2000.dec.degree
+
+        
+
 
     def calc_j2000(self,coordinates):
         '''Rather use add_j2000 for grid simulation purposes! Calculate RA and DEC
@@ -844,25 +903,56 @@ class GridPoint(SimulationObj):
 
                 i=int(ij_key[0])
                 j=int(ij_key[1])
-                ls=[]
+                strongest_detectors=[]
                 lsval=[]
 
-                if fixed_detectors is None:
-                    for tpl in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-(n_detectors+1):]:
-                        ls.append(tpl[0])
+                if fixed_detectors is None and n_detectors>3:
+                    sorted_detectors = sorted(full_sig[ij_key].items(), key=operator.itemgetter(1)) # increasing
+                    strongest_detectors= [tpl[0] for tpl in sorted_detectors[-(n_detectors+1):]] # increasing
 
+                    del_index=0
                     # Check for rule only one bgo detector
-                    if ("b0" in ls) and ("b1" in ls):
-                        if ls.index("b0")>ls.index("b1"):
-                            ls.remove("b1")
+                    if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
+                        del_index+=1
+                        if strongest_detectors.index("b0")>ls.index("b1"):
+                            strongest_detectors.remove("b1")
                         else:
-                            ls.remove("b0")
+                            strongest_detectors.remove("b0")
                     else:
-                        del ls[0]
-                else:
-                    ls = fixed_detectors
+                        del_index+=1
+                        del strongest_detectors[0]
 
-                selected_sig[ij_key]=ls
+                    # check that detectors dont lie on a line -> bad localization
+                    det = SimulationObj.det_cartesian_dict # TODO Have to set to SimulationObj
+                    smallest_angles_in_sub_triangles=[]
+                    for k in strongest_detectors:
+                        ls_temp=strongest_detectors
+                        ls_temp.remove(k)
+                        sub_triangle=ls_temp
+                        angles_in_sub_triangles=[]
+                        for p in ls_temp:
+                            sub_triangle=np.roll(sub_triangle,1)
+                            angles_in_sub_triangles.append(spg.great_circle_arc.angle(det[sub_triangle[0]],det[sub_triangle[1]],det[sub_triangle[2]]))
+                        smallest_angles_in_sub_triangles.append(min(angles_in_sub_triangles))
+
+                    biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
+                    
+                    if 0<biggest_smallest_angle<10:  
+                        del_index+=1
+                        del strongest_detectors[0]
+                        if not sorted_detectors[-(n_detectors+del_index)] in ['b1','b2']:
+                            strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index)])
+                        else:
+                            strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index+1)])
+
+
+
+
+
+                else:
+                    strongest_detectors = fixed_detectors
+
+                selected_sig[ij_key]=strongest_detectors
 
                 #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
                 for det in ls:
@@ -930,31 +1020,56 @@ class GridPoint(SimulationObj):
 
             i=int(ij_key[0])
             j=int(ij_key[1])
-            ls=[]
+            strongest_detectors=[]
             lsval=[]
 
-            if fixed_detectors is None:
+            if fixed_detectors is None and n_detectors>3:
+                sorted_detectors = sorted(full_sig[ij_key].items(), key=operator.itemgetter(1)) # increasing
+                strongest_detectors= [tpl[0] for tpl in sorted_detectors[-(n_detectors+1):]] # increasing
 
-                #Sort Detectors by significance and take strongest ones
-                for tpl in sorted(full_sig[ij_key].items(), key=operator.itemgetter(1))[-(n_detectors+1):]:
-                    ls.append(tpl[0])
-
-                # Check for rule only ob bgo detector
-                if ("b0" in ls) and ("b1" in ls):
-
-                    if ls.index("b0")>ls.index("b1"):
-                        ls.remove("b1")
+                del_index=0
+                # Check for rule only one bgo detector
+                if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
+                    del_index+=1
+                    if strongest_detectors.index("b0")>ls.index("b1"):
+                        strongest_detectors.remove("b1")
                     else:
-                        ls.remove("b0")
+                        strongest_detectors.remove("b0")
                 else:
+                    del_index+=1
+                    del strongest_detectors[0]
 
-                    del ls[0]
-                   
+                # check that detectors dont lie on a line -> bad localization
+                det = SimulationObj.det_cartesian_dict # TODO Have to set to SimulationObj
+                smallest_angles_in_sub_triangles=[]
+                for k in strongest_detectors:
+                    ls_temp=strongest_detectors
+                    ls_temp.remove(k)
+                    sub_triangle=ls_temp
+                    angles_in_sub_triangles=[]
+                    for p in ls_temp:
+                        sub_triangle=np.roll(sub_triangle,1)
+                        angles_in_sub_triangles.append(spg.great_circle_arc.angle(det[sub_triangle[0]],det[sub_triangle[1]],det[sub_triangle[2]]))
+                    smallest_angles_in_sub_triangles.append(min(angles_in_sub_triangles))
+
+                biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
+
+                if 0<biggest_smallest_angle<10:  
+                    del_index+=1
+                    del strongest_detectors[0]
+                    if not sorted_detectors[-(n_detectors+del_index)] in ['b1','b2']:
+                        strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index)])
+                    else:
+                        strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index+1)])
+
+
+
+
+
             else:
+                strongest_detectors = fixed_detectors
 
-                ls = fixed_detectors
-
-            selected_sig[ij_key]=ls
+            selected_sig[ij_key]=strongest_detectors
 
             for det in ls:
                 if det != 'b0' and det != 'b1':
