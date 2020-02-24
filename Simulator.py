@@ -5,6 +5,7 @@ import math
 import operator
 import os
 import random
+import copy
 
 import astropy.coordinates as coord
 import astropy.units as u
@@ -328,6 +329,7 @@ class Simulator(SimulationObj):
         position_interpolator = PositionInterpolator(trigdat=self.trigfile)
         self.sat_coord = position_interpolator.sc_pos(time)
         self.sat_quat = position_interpolator.quaternion(time)
+        self.get_detector_cartesian()
         for gp in self.grid:
             gp.add_j2000(self.sat_coord, self.sat_quat)
             if rank==0:
@@ -439,16 +441,19 @@ class Simulator(SimulationObj):
             gp.generate_DRM_spectrum(snr=snr)
             print("Save PHA "+str(i)+"\n")
             val_mat.append(gp.value_matrix)
+            val_mat=np.array(val_mat)
             # Save PHA RSP files
             gp.save_pha(overwrite=True)
 
+        if len(self.grid)<size and rank>=len(self.grid):
+            val_mat=np.empty(self.grid[0].value_matrix.shape)
+
         MPI.COMM_WORLD.Barrier()
         new_val_mat=np.array(MPI.COMM_WORLD.gather(val_mat,root=0),dtype='object')
+        MPI.COMM_WORLD.Barrier()
         if rank==0:
-            print(new_val_mat)
-            print(new_val_mat.shape)
+            new_val_mat=new_val_mat[:self.N]
             new_val_mat_resh=new_val_mat.reshape((self.N,self.spectrum_dimension[0],self.spectrum_dimension[1]),order='F')
-            print(new_val_mat_resh)
 
         if rank == 0 and SimulationObj.skeleton is False:
             # hdf5 logging
@@ -456,7 +461,6 @@ class Simulator(SimulationObj):
             print("Started Logging")
             simulation_file = h5py.File(self.simulation_file_path,"r+")
             for i,gp in enumerate(self.grid):
-                print(new_val_mat_resh[i])
                 simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=new_val_mat_resh[i]
 
                 #simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrixVhk
@@ -547,11 +551,11 @@ class Simulator(SimulationObj):
     def get_detector_cartesian(self):
         gbm = GBM(self.sat_quat,sc_pos=self.sat_coord*u.km)
         det=gbm.detectors
-        self.det_cartesian_dict={}
+        SimulationObj.det_cartesian_dict={}
         for key in det.keys():
             _a=det[key].get_center()
             _a.representation='cartesian'
-            self.det_cartesian_dict[key] = [_a.SCX,_a.SCY,_a.SCZ]
+            SimulationObj.det_cartesian_dict[key] = [_a.SCX,_a.SCY,_a.SCZ]
 
 
 class GridPoint(SimulationObj):
@@ -914,7 +918,7 @@ class GridPoint(SimulationObj):
                     # Check for rule only one bgo detector
                     if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
                         del_index+=1
-                        if strongest_detectors.index("b0")>ls.index("b1"):
+                        if strongest_detectors.index("b0")>strongest_detectors.index("b1"):
                             strongest_detectors.remove("b1")
                         else:
                             strongest_detectors.remove("b0")
@@ -926,24 +930,23 @@ class GridPoint(SimulationObj):
                     det = SimulationObj.det_cartesian_dict # TODO Have to set to SimulationObj
                     smallest_angles_in_sub_triangles=[]
                     for k in strongest_detectors:
-                        ls_temp=strongest_detectors
+                        ls_temp=copy.copy(strongest_detectors)
                         ls_temp.remove(k)
                         sub_triangle=ls_temp
                         angles_in_sub_triangles=[]
-                        for p in ls_temp:
-                            sub_triangle=np.roll(sub_triangle,1)
+                        for sub_triangle in multiset_permutations(ls_temp):
                             angles_in_sub_triangles.append(spg.great_circle_arc.angle(det[sub_triangle[0]],det[sub_triangle[1]],det[sub_triangle[2]]))
                         smallest_angles_in_sub_triangles.append(min(angles_in_sub_triangles))
 
                     biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
-                    
-                    if 0<biggest_smallest_angle<10:  
+
+                    if 0<biggest_smallest_angle<10:
                         del_index+=1
                         del strongest_detectors[0]
                         if not sorted_detectors[-(n_detectors+del_index)] in ['b1','b2']:
-                            strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index)])
+                            strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index)][0])
                         else:
-                            strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index+1)])
+                            strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index+1)][0])
 
 
 
@@ -952,6 +955,7 @@ class GridPoint(SimulationObj):
                 else:
                     strongest_detectors = fixed_detectors
 
+                ls=strongest_detectors
                 selected_sig[ij_key]=strongest_detectors
 
                 #data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
@@ -1031,7 +1035,7 @@ class GridPoint(SimulationObj):
                 # Check for rule only one bgo detector
                 if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
                     del_index+=1
-                    if strongest_detectors.index("b0")>ls.index("b1"):
+                    if strongest_detectors.index("b0")>strongest_detectors.index("b1"):
                         strongest_detectors.remove("b1")
                     else:
                         strongest_detectors.remove("b0")
@@ -1043,24 +1047,23 @@ class GridPoint(SimulationObj):
                 det = SimulationObj.det_cartesian_dict # TODO Have to set to SimulationObj
                 smallest_angles_in_sub_triangles=[]
                 for k in strongest_detectors:
-                    ls_temp=strongest_detectors
+                    ls_temp=copy.copy(strongest_detectors)
                     ls_temp.remove(k)
                     sub_triangle=ls_temp
                     angles_in_sub_triangles=[]
-                    for p in ls_temp:
-                        sub_triangle=np.roll(sub_triangle,1)
+                    for sub_triangle in multiset_permutations(ls_temp):
                         angles_in_sub_triangles.append(spg.great_circle_arc.angle(det[sub_triangle[0]],det[sub_triangle[1]],det[sub_triangle[2]]))
                     smallest_angles_in_sub_triangles.append(min(angles_in_sub_triangles))
 
                 biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
 
-                if 0<biggest_smallest_angle<10:  
+                if 0<biggest_smallest_angle<10:
                     del_index+=1
                     del strongest_detectors[0]
                     if not sorted_detectors[-(n_detectors+del_index)] in ['b1','b2']:
-                        strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index)])
+                        strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index)][0])
                     else:
-                        strongest_detectors.prepend(sorted_detectors[-(n_detectors+del_index+1)])
+                        strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index+1)][0])
 
 
 
@@ -1069,6 +1072,7 @@ class GridPoint(SimulationObj):
             else:
                 strongest_detectors = fixed_detectors
 
+            ls=strongest_detectors
             selected_sig[ij_key]=strongest_detectors
 
             for det in ls:
