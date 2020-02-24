@@ -17,6 +17,7 @@ from mpi4py import MPI
 from sphere.distribution import fb83
 from tabulate import tabulate
 import threeML as tml
+import spherical_geometry as spg
 
 import gbm_drm_gen as drm
 from gbmgeometry import GBM, GBMFrame, PositionInterpolator, gbm_frame
