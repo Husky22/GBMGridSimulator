@@ -1,4 +1,5 @@
 import csv
+import shutil
 import gc
 import json
 import math
@@ -90,7 +91,7 @@ class Simulator(SimulationObj):
         self.trigger_folder = self.directory+"/rawdata/"+self.trigger
         self.trigfile = glob(self.trigger_folder + '/glg_trigdat_all_bn'+self.trigger+'_v0*.fit')[0]
 
-    def setup(self, source_number, K, index_range=[-2, -1, 1], cutoff_range=[100, 400, 1], skeleton=False ):
+    def setup(self, source_number, K, index_range=[-2, -1, 1], cutoff_range=[100, 400, 1], skeleton=False, overwrite = False):
         '''
         Setup the GRB Grid
 
@@ -115,13 +116,17 @@ class Simulator(SimulationObj):
         SimulationObj.skeleton = skeleton
         SimulationObj.sim_path=self.directory+"/"+self.simulation_name+"_Files/"
 
+
         if rank == 0:
 
             print("Garbage Collection enabled: "+str(gc.isenabled())+"\n")
 
             if skeleton is False:
 
-                if not os.path.exists(self.sim_path):
+                if os.path.exists(self.sim_path) and overwrite:
+                    shutil.rmtree(self.sim_path)
+                    os.mkdir(self.sim_path)
+                else:
                     os.makedirs(self.sim_path)
 
                 SimulationObj.simulation_file_path=self.sim_path+self.simulation_name+".hdf5"
@@ -157,10 +162,10 @@ class Simulator(SimulationObj):
 
         for point in self.grid:
             # Generate Astromodels Spectra
-            point.generate_astromodels_spectrum(i_min=float(min(irange)),
-                                                i_max=float(max(irange)),
-                                                c_min=float(min(crange)),
-                                                c_max=float(max(crange)))
+            point.generate_astromodels_spectrum(i_min=float(min(self.irange)),
+                                                i_max=float(max(self.irange)),
+                                                c_min=float(min(self.crange)),
+                                                c_max=float(max(self.crange)))
     def fibonacci_sphere(self, randomize=False):
         """
         The standard algorithm for isotropic point distribution on a sphere based on the fibonacci-series
@@ -270,6 +275,8 @@ class Simulator(SimulationObj):
             # Update coordinates
             gp.update_coord(particles[i])
 
+        return particles
+        
 
 
 
@@ -279,13 +286,12 @@ class Simulator(SimulationObj):
         '''
         try:
             position_interpolator = PositionInterpolator(trigdat=self.trigfile)
-        except:
-            return ValueError("TRIG File not found")
+        except IOError:
+            return IOError("TRIG File at path '{}' not found.".format(self.trigfile))
 
         self.sat_coord = position_interpolator.sc_pos(time)
         self.sat_quat = position_interpolator.quaternion(time)
         self.get_detector_cartesian()
-
         for gp in self.grid:
             gp.add_j2000(self.sat_coord, self.sat_quat)
             if rank==0:
@@ -310,12 +316,9 @@ class Simulator(SimulationObj):
         '''
         Visualize Grid
         '''
-        ralist = []
-        declist = []
-        for point in self.grid:
-            ralist.append(point.j2000.ra)
-            declist.append(point.j2000.dec)
-            icrsdata = coord.SkyCoord(ra=ralist*u.degree, dec=declist*u.degree, frame=coord.ICRS)
+        ralist = [point.j2000.ra for point in self.grid]
+        declist = [point.j2000.dec for point in self.grid]
+        icrsdata = coord.SkyCoord(ra=ralist*u.degree, dec=declist*u.degree, frame=coord.ICRS)
         plt.subplot(111, projection='aitoff')
         plt.grid(True)
         plt.scatter(icrsdata.ra.wrap_at('180d').radian, icrsdata.dec.radian)
@@ -324,9 +327,7 @@ class Simulator(SimulationObj):
         '''
         Returns python list of all x,y,z coordinates of the points
         '''
-        pointlist = []
-        for point in self.grid:
-            pointlist.append(point.coord)
+        pointlist = [point.coord for point in self.grid]
         return pointlist
 
     def generate_TRIG_spectrum(self, trigger="191017391"):
@@ -810,7 +811,15 @@ class GridPoint(SimulationObj):
             fits.attrs["SignificanceDict"]=json.dumps(significance_dict[ij_key])
             simulation_file.close()
 
-    def fit_fisher_samples(self,n_detectors,fixed_detectors=None):
+    def band_calderone_standard_template(self):
+            spectrum=tml.Band_Calderone(opt=0)
+            spectrum.F.prior=tml.Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
+            spectrum.alpha.set_uninformative_prior(tml.Uniform_prior)
+            spectrum.beta.fix=True
+            spectrum.xp.prior=tml.Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
+            return spectrum
+
+    def fit_all_fisher_samples(self,n_detectors,fixed_detectors=None):
 
         for n,sample in enumerate(self.fisher_samples_radec):
 
@@ -840,12 +849,8 @@ class GridPoint(SimulationObj):
 
 
             # Setting up Spectrum with parameter priors
+            spectrum = self.band_calderone_standard_template()
 
-            spectrum=tml.Band_Calderone(opt=0)
-            spectrum.F.prior=tml.Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
-            spectrum.alpha.set_uninformative_prior(tml.Uniform_prior)
-            spectrum.beta.fix=True
-            spectrum.xp.prior=tml.Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
 
             ps=tml.PointSource(self.name,ra=float(sample.ra.degree),dec=float(sample.dec.degree), spectral_shape=spectrum)
             full_sig =  {(str(i), str(j)): {det : fisher_temp_response[(str(i),str(j))][det].significance for det in det_list} for (i, j), value in np.ndenumerate(self.value_matrix)}
@@ -957,12 +962,8 @@ class GridPoint(SimulationObj):
 
 
     def fit_true_samples(self,n_detectors,fixed_detectors):
-        spectrum=tml.Band_Calderone(opt=0)
-        spectrum.F.prior=tml.Log_uniform_prior(lower_bound=1E-20,upper_bound=100)
-        spectrum.alpha.set_uninformative_prior(tml.Uniform_prior)
-        spectrum.beta.fix=True
-        spectrum.xp.prior=tml.Log_uniform_prior(lower_bound=1E-20, upper_bound=10000)
 
+        spectrum = self.band_calderone_standard_template()
         ps=tml.PointSource(self.name,ra=self.ra,dec=self.dec, spectral_shape=spectrum)
         model=tml.Model(ps)
 
@@ -984,50 +985,10 @@ class GridPoint(SimulationObj):
             lsval=[]
 
             if fixed_detectors is None and n_detectors>3:
-                sorted_detectors = sorted(full_sig[ij_key].items(), key=operator.itemgetter(1)) # increasing
-                strongest_detectors= [tpl[0] for tpl in sorted_detectors[-(n_detectors+1):]] # increasing
-
-                del_index=0
-                # Check for rule only one bgo detector
-                if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
-                    del_index+=1
-                    if strongest_detectors.index("b0")>strongest_detectors.index("b1"):
-                        strongest_detectors.remove("b1")
-                    else:
-                        strongest_detectors.remove("b0")
-                else:
-                    del_index+=1
-                    del strongest_detectors[0]
-
-                # check that detectors dont lie on a line -> bad localization
-                det = SimulationObj.det_cartesian_dict # TODO Have to set to SimulationObj
-                smallest_angles_in_sub_triangles=[]
-                for k in strongest_detectors:
-                    ls_temp=copy.copy(strongest_detectors)
-                    ls_temp.remove(k)
-                    sub_triangle=ls_temp
-                    angles_in_sub_triangles=[]
-                    for sub_triangle in multiset_permutations(ls_temp):
-                        angles_in_sub_triangles.append(spg.great_circle_arc.angle(det[sub_triangle[0]],det[sub_triangle[1]],det[sub_triangle[2]]))
-                    smallest_angles_in_sub_triangles.append(min(angles_in_sub_triangles))
-
-                biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
-
-                if 0<biggest_smallest_angle<10:
-                    del_index+=1
-                    del strongest_detectors[0]
-                    if not sorted_detectors[-(n_detectors+del_index)] in ['b1','b2']:
-                        strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index)][0])
-                    else:
-                        strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index+1)][0])
-
-
-
-
+                strongest_detectors = self.optimize_detector_dict(full_sig[ij_key],n_detectors)
 
             else:
                 strongest_detectors = fixed_detectors
-
             ls=strongest_detectors
             selected_sig[ij_key]=strongest_detectors
 
@@ -1069,4 +1030,45 @@ class GridPoint(SimulationObj):
         del full_sig
         del ba
         gc.collect()
+
+
+    def optimize_detector_dict(self, full_sig_entry, n_detectors):
+        sorted_detectors = sorted(full_sig_entry.items(), key=operator.itemgetter(1)) # increasing
+        strongest_detectors= [tpl[0] for tpl in sorted_detectors[-(n_detectors+1):]] # increasing
+
+        del_index=0
+        # Check for rule only one bgo detector
+        if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
+            del_index+=1
+            if strongest_detectors.index("b0")>strongest_detectors.index("b1"):
+                strongest_detectors.remove("b1")
+            else:
+                strongest_detectors.remove("b0")
+        else:
+            del_index+=1
+            del strongest_detectors[0]
+
+        # check that detectors dont lie on a line -> bad localization
+        det = SimulationObj.det_cartesian_dict # TODO Have to set to SimulationObj
+        smallest_angles_in_sub_triangles=[]
+        for k in strongest_detectors:
+            ls_temp=copy.copy(strongest_detectors)
+            ls_temp.remove(k)
+            sub_triangle=ls_temp
+            angles_in_sub_triangles=[]
+            for sub_triangle in multiset_permutations(ls_temp):
+                angles_in_sub_triangles.append(spg.great_circle_arc.angle(det[sub_triangle[0]],det[sub_triangle[1]],det[sub_triangle[2]]))
+            smallest_angles_in_sub_triangles.append(min(angles_in_sub_triangles))
+
+        biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
+
+        if 0<biggest_smallest_angle<10:
+            del_index+=1
+            del strongest_detectors[0]
+            if not sorted_detectors[-(n_detectors+del_index)] in ['b1','b2']:
+                strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index)][0])
+            else:
+                strongest_detectors.insert(0,sorted_detectors[-(n_detectors+del_index+1)][0])
+
+        return strongest_detectors
 
