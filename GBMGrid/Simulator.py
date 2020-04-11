@@ -251,7 +251,6 @@ class Simulator(SimulationObj):
         self.setup_response_generator()
         self.grid = []
 
-
     def grid_generate_astromodel_spectrum(self):
         for point in self.grid:
             # Generate Astromodels Spectra
@@ -584,7 +583,10 @@ class Simulator(SimulationObj):
         new_val_mat = np.array(MPI.COMM_WORLD.gather(val_mat, root=0), dtype="object")
         MPI.COMM_WORLD.Barrier()
         if rank == 0:
-            new_val_mat = new_val_mat[: self.N]
+            verboseprint("New Values Matrix: ", new_val_mat)
+            #new_val_mat = new_val_mat[: self.N]
+            new_val_mat_resh = np.ndarray(new_val_mat[: self.N])
+            verboseprint("New Values Matrix Reshape Step1: ", np.shape(new_val_mat))
             new_val_mat_resh = new_val_mat.reshape(
                 (self.N, self.spectrum_dimension[0], self.spectrum_dimension[1]),
                 order="F",
@@ -596,7 +598,7 @@ class Simulator(SimulationObj):
             verboseprint("Started Logging")
             simulation_file = h5py.File(self.simulation_file_path, "r+")
             for i, gp in enumerate(self.grid):
-                simulation_file["grid/" + gp.name + "/Spectrum Parameters"][
+                simulation_file[f"grid/{gp.name}/Spectrum Parameters"][
                     ...
                 ] = new_val_mat_resh[i]
 
@@ -767,6 +769,7 @@ class GridPoint(SimulationObj):
             i += 1
 
         if rank == 0 and SimulationObj.skeleton is False:
+            print(list(f[self.name]))
             f[self.name].create_dataset(
                 "Spectrum Parameters", self.dim, data=self.value_matrix
             )
@@ -1205,8 +1208,6 @@ class GridPoint(SimulationObj):
             }
             selected_sig = {}
             model = tml.Model(ps)
-            result = dict()
-            jl = {}
             ba = {}
             data = dict()
 
@@ -1220,76 +1221,17 @@ class GridPoint(SimulationObj):
                 i = int(ij_key[0])
                 j = int(ij_key[1])
                 strongest_detectors = []
-                lsval = []
 
-                if fixed_detectors is None and n_detectors > 3:
-                    sorted_detectors = sorted(
-                        full_sig[ij_key].items(), key=operator.itemgetter(1)
-                    )  # increasing
-                    strongest_detectors = [
-                        tpl[0] for tpl in sorted_detectors[-(n_detectors + 1) :]
-                    ]  # increasing
-
-                    del_index = 0
-                    # Check for rule only one bgo detector
-                    if ("b0" in strongest_detectors) and ("b1" in strongest_detectors):
-                        del_index += 1
-                        if strongest_detectors.index("b0") > strongest_detectors.index(
-                            "b1"
-                        ):
-                            strongest_detectors.remove("b1")
-                        else:
-                            strongest_detectors.remove("b0")
-                    else:
-                        del_index += 1
-                        del strongest_detectors[0]
-
-                    # check that detectors dont lie on a line -> bad localization
-                    det = (
-                        SimulationObj.det_cartesian_dict
-                    )  # TODO Have to set to SimulationObj
-                    smallest_angles_in_sub_triangles = []
-                    for k in strongest_detectors:
-                        ls_temp = copy.copy(strongest_detectors)
-                        ls_temp.remove(k)
-                        sub_triangle = ls_temp
-                        angles_in_sub_triangles = []
-                        for sub_triangle in multiset_permutations(ls_temp):
-                            angles_in_sub_triangles.append(
-                                spg.great_circle_arc.angle(
-                                    det[sub_triangle[0]],
-                                    det[sub_triangle[1]],
-                                    det[sub_triangle[2]],
-                                )
-                            )
-                        smallest_angles_in_sub_triangles.append(
-                            min(angles_in_sub_triangles)
-                        )
-
-                    biggest_smallest_angle = max(smallest_angles_in_sub_triangles)
-
-                    if 0 < biggest_smallest_angle < 10:
-                        del_index += 1
-                        del strongest_detectors[0]
-                        if not sorted_detectors[-(n_detectors + del_index)] in [
-                            "b1",
-                            "b2",
-                        ]:
-                            strongest_detectors.insert(
-                                0, sorted_detectors[-(n_detectors + del_index)][0]
-                            )
-                        else:
-                            strongest_detectors.insert(
-                                0, sorted_detectors[-(n_detectors + del_index + 1)][0]
-                            )
-
+                if fixed_detectors is None:
+                    verboseprint("Optimize Detectors")
+                    strongest_detectors = self.optimize_detector_dict(
+                        full_sig[ij_key], n_detectors
+                    )
                 else:
                     strongest_detectors = fixed_detectors
-
                 ls = strongest_detectors
                 selected_sig[ij_key] = strongest_detectors
 
-                # data[ij_key]=tml.DataList(*[drm.BALROGLike.from_spectrumlike(self.response_generator[det][i,j],0,self.det_rsp[det]) for det in selected_sig[ij_key]])
                 for det in ls:
                     if det != "b0" and det != "b1":
                         fisher_temp_response[(str(i), str(j))][
@@ -1367,8 +1309,6 @@ class GridPoint(SimulationObj):
             for (i, j), value in np.ndenumerate(self.value_matrix)
         }
         selected_sig = {}
-        result = dict()
-        jl = {}
         ba = {}
         data = dict()
 
@@ -1382,7 +1322,6 @@ class GridPoint(SimulationObj):
             i = int(ij_key[0])
             j = int(ij_key[1])
             strongest_detectors = []
-            lsval = []
 
             if fixed_detectors is None:
                 verboseprint("Optimize Detectors")
