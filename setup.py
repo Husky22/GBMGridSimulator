@@ -12,7 +12,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Husky22/GBMGridSimulator",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages("GBMGrid", exclude=["test*"]),
     classifiers=[
         "Programming Language :: Python :: 2",
         "License :: OSI Approved :: MIT License",
