@@ -1,6 +1,7 @@
 import csv
 import shutil
 import gc
+import itertools
 import json
 import math
 import operator
@@ -569,28 +570,29 @@ class Simulator(SimulationObj):
             if i % size != rank:
                 continue
             verboseprint("GridPoint %d being done by processor %d \n" % (i, rank))
+            SimulationObj.verbose = False
             gp.generate_DRM_spectrum(snr=snr)
+            SimulationObj.verbose = verbose
             print("Save PHA " + str(i) + "\n")
-            val_mat.append(gp.value_matrix)
-            val_mat = np.array(val_mat)
+            val_mat.append((i, gp.value_matrix))
             # Save PHA RSP files
             gp.save_pha(overwrite=True)
 
         if len(self.grid) < size and rank >= len(self.grid):
-            val_mat = np.empty(self.grid[0].value_matrix.shape)
+            val_mat = (rank, np.empty(self.grid[0].value_matrix.shape))
+            
+        verboseprint("MPI_GATHER: ", MPI.COMM_WORLD.gather(val_mat, root=0))
 
         MPI.COMM_WORLD.Barrier()
-        new_val_mat = np.array(MPI.COMM_WORLD.gather(val_mat, root=0), dtype="object")
+        #new_val_mat = np.ndarray(MPI.COMM_WORLD.gather(val_mat, root=0), dtype="object")
+        gather_list = MPI.COMM_WORLD.gather(val_mat, root=0)
         MPI.COMM_WORLD.Barrier()
         if rank == 0:
-            verboseprint("New Values Matrix: ", new_val_mat)
+            gather_list = list(itertools.chain.from_iterable(gather_list))
+            verboseprint(gather_list)
             #new_val_mat = new_val_mat[: self.N]
-            new_val_mat_resh = np.ndarray(new_val_mat[: self.N])
-            verboseprint("New Values Matrix Reshape Step1: ", np.shape(new_val_mat))
-            new_val_mat_resh = new_val_mat.reshape(
-                (self.N, self.spectrum_dimension[0], self.spectrum_dimension[1]),
-                order="F",
-            )
+            new_val_mat_dict = {i: entry for i, entry in gather_list}
+            verboseprint("Dict New Value Mat", new_val_mat_dict)
 
         if rank == 0 and SimulationObj.skeleton is False:
             # hdf5 logging
@@ -600,7 +602,7 @@ class Simulator(SimulationObj):
             for i, gp in enumerate(self.grid):
                 simulation_file[f"grid/{gp.name}/Spectrum Parameters"][
                     ...
-                ] = new_val_mat_resh[i]
+                ] = new_val_mat_dict[i]
 
                 # simulation_file['grid/'+gp.name+"/Spectrum Parameters"][...]=gp.value_matrixVhk
             simulation_file.close()
@@ -903,7 +905,7 @@ class GridPoint(SimulationObj):
             verboseprint(self.name + ": Calc Response\n")
 
             for det in det_list:
-                verboseprint(f'Response of {det} occult: {self.det_rsp[det]._occult}')
+                # verboseprint(f'Response of {det} occult: {self.det_rsp[det]._occult}')
                 self.response[det] = self.det_rsp[det].to_3ML_response(ra, dec)
 
                 self.response_generator[det] = np.empty(self.dim, dtype=classmethod)
